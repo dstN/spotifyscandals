@@ -1,0 +1,19 @@
+{
+  "name": "spotifyscandals",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Monorepo für Spotify Scandals: Analyse von Playlists und Künstler-Skandalen.",
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.8"
+  }
+}

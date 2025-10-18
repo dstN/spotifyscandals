@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Artist {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  imageUrl  String?   @db.VarChar(2048)
+  genres    Json?
+  scandals  Scandal[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Scandal {
+  id          Int       @id @default(autoincrement())
+  artist      Artist    @relation(fields: [artistId], references: [id])
+  artistId    Int
+  title       String
+  description String?
+  sourceUrl   String    @db.VarChar(2048)
+  sourceName  String?
+  date        DateTime?
+  altSources  Json?
+  createdAt   DateTime  @default(now())
+}
+
+model CacheEntry {
+  id         Int      @id @default(autoincrement())
+  artistName String   @unique
+  payload    Json
+  expiresAt  DateTime? // TTL: When cache should be refreshed
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
+}
