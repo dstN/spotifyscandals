@@ -1,0 +1,379 @@
+@import 'tailwindcss';
+
+/* ═══════════════════════════════════════════════════════════════
+   Spotify Skandal Tracker — Design System
+   Glass effect technique from sywt.vercel.app by dstN:
+   - Very low blur (2px) + SVG liquid distortion on backdrop-filter
+   - "Goo" filter on blob container for organic merging
+   - ::before pseudo-element gradient highlight on top edge
+   ═══════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* ─── Core Colors ─── */
+  --color-bg-primary: #0b0e10;
+  --color-bg-secondary: #0d1012;
+  --color-bg-tertiary: #161b1e;
+
+  /* ─── Glass Surface (iOS Style) ─── */
+  --color-glass: rgba(28, 28, 30, 0.45);
+  --color-glass-hover: rgba(44, 44, 46, 0.55);
+  --color-glass-border: rgba(255, 255, 255, 0.12);
+  --color-glass-border-hover: rgba(255, 255, 255, 0.22);
+
+  /* ─── Text ─── */
+  --color-text-primary: rgba(255, 255, 255, 0.95);
+  --color-text-secondary: rgba(255, 255, 255, 0.65);
+  --color-text-tertiary: rgba(255, 255, 255, 0.4);
+
+  /* ─── Accents ─── */
+  --color-accent: #1ed760;
+  --color-accent-glow: rgba(30, 215, 96, 0.3);
+  --color-success: #1ed760;
+  --color-success-glow: rgba(30, 215, 96, 0.2);
+  --color-warning: #ff9f0a;
+  --color-warning-glow: rgba(255, 159, 10, 0.2);
+  --color-danger: #ff453a;
+  --color-danger-glow: rgba(255, 69, 58, 0.2);
+
+  /* ─── Spotify brand ─── */
+  --color-spotify: #1db954;
+  --color-spotify-glow: rgba(29, 185, 84, 0.35);
+}
+
+/* ─── Base ─── */
+html {
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  margin: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Background — Spotify Audio Waveform Blobs
+   Not generic circles — these are elongated horizontal shapes
+   that evoke sound waves and equalizer bars, using Spotify green
+   + deep purple as the primary palette. The goo filter on the
+   container makes adjacent blobs merge organically.
+   ═══════════════════════════════════════════════════════════════ */
+
+.bg-decorations {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Glass Card — Exact technique from sywt.vercel.app
+   Key insight: very LOW blur (2px) + SVG liquid distortion
+   makes the blobs look alive and refractive, not just blurred.
+   The ::before adds the horizontal gradient top-edge shimmer.
+   ═══════════════════════════════════════════════════════════════ */
+
+.glass {
+  position: relative;
+  /* Simulating the surface curve with a subtle light sweep */
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 40%,
+    rgba(255, 255, 255, 0.01) 60%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  border-radius: 32px; /* Smoother, squircular look common in modern Apple UI */
+
+  /* Volumetric 3D Glass using inset highlights and ambient occlusion */
+  box-shadow: 
+    /* Soft bright specular highlight across the top edge */
+    inset 0 2px 4px 0 rgba(255, 255, 255, 0.25),
+    /* Deep crisp internal shadow across the bottom edge */ inset 0 -4px 12px 0 rgba(0, 0, 0, 0.6),
+    /* Strong rim light catching the top outer edge */ inset 0 1px 0 0 rgba(255, 255, 255, 0.35),
+    /* Outer rim shadow mapping the object */ inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    /* Soft ambient drop shadows blending cleanly into absolute darkness */ 0 10px 40px
+      rgba(0, 0, 0, 0.5);
+
+  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+  transform: translateZ(0);
+  will-change: transform;
+  backface-visibility: hidden;
+  isolation: isolate;
+  border: none; /* Borders are handled entirely by inset shadows for realism */
+  padding: 1.5rem; /* Give it the breathing room associated with iOS cards */
+}
+
+/* Secondary internal light refraction layer */
+.glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    70% 50% at 50% 0%,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  pointer-events: none;
+  mix-blend-mode: color-dodge;
+  opacity: 0.6;
+}
+
+.glass:hover {
+  /* The material 'thickens' on hover by raising its light exposure */
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    rgba(255, 255, 255, 0.02) 60%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  box-shadow:
+    inset 0 3px 6px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -6px 16px 0 rgba(0, 0, 0, 0.8),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 16px 60px rgba(0, 0, 0, 0.7);
+  transform: translateY(-4px) translateZ(0);
+}
+
+/* ─── Buttons ─── */
+.btn-primary {
+  background: var(--color-accent);
+  color: #000;
+  border: none;
+  border-radius: 500px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 0 0 var(--color-accent-glow);
+}
+.btn-primary:hover {
+  box-shadow: 0 6px 16px var(--color-accent-glow);
+  transform: translateY(-2px);
+  background: #1fdf64;
+}
+.btn-primary:active {
+  transform: translateY(0) scale(0.99);
+}
+.btn-primary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-success {
+  background: var(--color-success);
+  color: #000;
+  border: none;
+  border-radius: 500px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 0 0 var(--color-success-glow);
+}
+.btn-success:hover {
+  box-shadow: 0 6px 16px var(--color-success-glow);
+  transform: translateY(-2px);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  color: white;
+  border: none;
+  border-radius: 500px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 0 0 var(--color-danger-glow);
+}
+.btn-danger:hover {
+  box-shadow: 0 6px 16px var(--color-danger-glow);
+  transform: translateY(-2px);
+}
+
+.btn-spotify {
+  background: var(--color-spotify);
+  color: #000;
+  border: none;
+  border-radius: 500px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 0 0 var(--color-spotify-glow);
+}
+.btn-spotify:hover {
+  box-shadow: 0 6px 16px var(--color-spotify-glow);
+  transform: translateY(-2px);
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 500px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-outline:hover {
+  background: var(--color-glass);
+  border-color: var(--color-glass-border-hover);
+}
+
+/* ─── Input ─── */
+.input-glass {
+  position: relative;
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 40%,
+    rgba(255, 255, 255, 0.01) 60%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  border: none;
+  border-radius: 16px;
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+
+  box-shadow:
+    inset 0 2px 4px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -2px 6px 0 rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.2),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 4px 12px rgba(0, 0, 0, 0.3);
+
+  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.input-glass::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.input-glass:hover {
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.03) 40%,
+    rgba(255, 255, 255, 0.02) 60%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  box-shadow:
+    inset 0 2px 4px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -2px 8px 0 rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.input-glass:focus {
+  background: linear-gradient(155deg, rgba(30, 215, 96, 0.08) 0%, rgba(30, 215, 96, 0.02) 100%);
+  box-shadow:
+    inset 0 2px 4px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -2px 6px 0 rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.4),
+    inset 0 0 0 1px var(--color-accent),
+    0 0 0 3px var(--color-accent-glow),
+    0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* ─── Badge ─── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.badge-success {
+  background: var(--color-success-glow);
+  color: var(--color-success);
+}
+.badge-warning {
+  background: var(--color-warning-glow);
+  color: var(--color-warning);
+}
+.badge-danger {
+  background: var(--color-danger-glow);
+  color: var(--color-danger);
+}
+.badge-neutral {
+  background: var(--color-glass);
+  color: var(--color-text-secondary);
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(30, 215, 96, 0.3);
+}
+
+/* ─── Spinner ─── */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ─── Fade-in animation ─── */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-in {
+  animation: fadeIn 0.45s ease-out;
+}

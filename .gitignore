@@ -60,3 +60,11 @@ prisma/migrations/
 
 # Railway
 .railway
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.egg-info/
