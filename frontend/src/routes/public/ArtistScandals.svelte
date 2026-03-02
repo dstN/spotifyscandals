@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { fetchArtist, fetchScandals, submitScandalVote, submitCommunityScandal } from '../../lib/api.js'
+  import { fetchArtist, fetchScandals, submitScandalVote, submitCommunityScandal, reportScandalSource } from '../../lib/api.js'
   import { showToast, spotifyUser, publicToken } from '../../lib/stores.js'
 
   let { params } = $props()
@@ -245,19 +245,19 @@
               
               <div class="flex flex-col w-full sm:w-auto mt-4 sm:mt-0 items-start sm:items-end gap-1">
                 <div class="flex items-center justify-between sm:justify-end gap-6 w-full sm:w-auto">
-                  <div class="flex flex-col items-start sm:items-end">
+                  <span class="flex flex-col items-start sm:items-end">
                     <span class="text-[10px] font-bold uppercase tracking-widest text-text-tertiary mb-1">Average Severity</span>
                   {#if scandal.average_vote !== null}
-                    <div class="flex items-baseline gap-1">
+                    <span class="flex items-baseline gap-1">
                       <span class={`text-4xl font-black transition-transform group-hover:scale-105 ${getSeverityColor(scandal.average_vote)}`}>
                         {scandal.average_vote.toFixed(1)}
                       </span>
                       <span class="text-text-secondary text-sm">/10</span>
-                    </div>
+                    </span>
                   {:else}
                     <span class="text-xs font-medium text-text-secondary bg-bg-primary px-3 py-1.5 rounded-lg mt-1 border border-glass-border">No votes yet</span>
                   {/if}
-                </div>
+                </span>
                 
                 <!-- Animated Chevron -->
                 <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-bg-primary/50 border border-glass-border text-text-tertiary transition-all duration-300 group-hover:bg-glass-hover group-hover:text-white group-hover:border-glass-border-hover">
@@ -338,24 +338,51 @@
                   {/if}
                 </div>
 
-                {#if scandal.sources && scandal.sources.length > 0}
+                {#if scandal.sources && scandal.sources.filter(s => s.is_verified).length > 0}
                   <div class="space-y-3">
                     <h4 class="text-xs font-bold uppercase tracking-widest text-text-tertiary">
                       Sources & References
                     </h4>
                     <div class="flex flex-col gap-2">
-                      {#each scandal.sources as source}
-                        <a
-                          href={source.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          class="group/link flex items-start gap-3 rounded-xl border border-glass-border px-4 py-3 text-sm text-text-secondary no-underline transition-all hover:border-glass-border-hover hover:bg-glass hover:text-text-primary w-full"
-                        >
-                          <span class="text-text-tertiary transition-colors group-hover/link:text-text-secondary mt-0.5 shrink-0">↗</span>
-                          <span class="break-all pr-4 flex-1">
-                            {source.source_url.includes('vertexaisearch') ? 'Google Search Grounding Result' : source.source_url}
-                          </span>
-                        </a>
+                      {#each scandal.sources.filter(s => s.is_verified) as source}
+                        <div class="flex items-center gap-2 group/source">
+                          <a
+                            href={source.source_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="group/link flex items-start gap-3 rounded-xl border border-glass-border px-4 py-3 text-sm text-text-secondary no-underline transition-all hover:border-glass-border-hover hover:bg-glass hover:text-text-primary flex-1 min-w-0"
+                          >
+                            <span class="text-text-tertiary transition-colors group-hover/link:text-text-secondary mt-0.5 shrink-0">↗</span>
+                            <span class="break-all pr-4 flex-1">
+                              {source.source_url.includes('vertexaisearch') ? 'Google Search Grounding Result' : source.source_url}
+                            </span>
+                          </a>
+                          {#if !source.is_reported}
+                            <button
+                              class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-glass-border text-text-tertiary transition-all hover:border-danger hover:bg-danger-glow hover:text-danger cursor-pointer"
+                              title="Report as wrong source"
+                              onclick={async () => {
+                                try {
+                                  await reportScandalSource(scandal.id, source.id)
+                                  source.is_reported = true
+                                  showToast('success', 'Source reported. Thanks for helping!')
+                                } catch (e) {
+                                  showToast('error', `Report failed: ${e.message}`)
+                                }
+                              }}
+                            >
+                              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                              </svg>
+                            </button>
+                          {:else}
+                            <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-danger-glow text-danger border border-danger/30" title="Source reported">
+                              <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                              </svg>
+                            </div>
+                          {/if}
+                        </div>
                       {/each}
                     </div>
                   </div>
@@ -381,6 +408,7 @@
       <button 
         class="absolute right-4 top-4 text-text-tertiary hover:text-text-primary"
         onclick={() => showCommunityPopup = false}
+        aria-label="Close popup"
       >
         <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -401,8 +429,9 @@
       {:else}
         <form class="space-y-4" onsubmit={(e) => { e.preventDefault(); handleCommunitySubmit(); }}>
           <div>
-            <label class="mb-1 block text-xs font-medium text-text-tertiary uppercase tracking-wider">Title</label>
+            <label for="community-title" class="mb-1 block text-xs font-medium text-text-tertiary uppercase tracking-wider">Title</label>
             <input 
+              id="community-title"
               type="text" 
               bind:value={communityTitle} 
               required 
@@ -412,8 +441,9 @@
             />
           </div>
           <div>
-            <label class="mb-1 block text-xs font-medium text-text-tertiary uppercase tracking-wider">Description</label>
+            <label for="community-desc" class="mb-1 block text-xs font-medium text-text-tertiary uppercase tracking-wider">Description</label>
             <textarea 
+              id="community-desc"
               bind:value={communityDesc} 
               required 
               maxlength="500"
@@ -424,7 +454,7 @@
           </div>
           <div>
             <div class="flex items-center justify-between mb-1">
-              <label class="block text-xs font-medium text-text-tertiary uppercase tracking-wider">Source URLs (Optional)</label>
+              <label for="community-source-0" class="block text-xs font-medium text-text-tertiary uppercase tracking-wider">Source URLs (Optional)</label>
               <button 
                 type="button" 
                 onclick={() => communitySources.push('')} 
@@ -439,6 +469,7 @@
               {#each communitySources as source, index}
                 <div class="flex gap-2">
                   <input 
+                    id="community-source-{index}"
                     type="url" 
                     bind:value={communitySources[index]} 
                     class="w-full rounded-xl border border-glass-border bg-bg-secondary/50 px-4 py-2.5 text-sm text-text-primary focus:border-glass-border-hover focus:outline-none"
@@ -449,6 +480,7 @@
                       type="button" 
                       onclick={() => communitySources.splice(index, 1)} 
                       class="shrink-0 flex items-center justify-center w-10 border border-glass-border rounded-xl text-text-tertiary hover:border-danger hover:text-danger hover:bg-danger-glow transition-all cursor-pointer"
+                      aria-label="Remove source"
                     >
                       <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>

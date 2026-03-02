@@ -37,9 +37,19 @@ async function request(path, options = {}) {
   const config = {
     ...options,
     headers,
+    cache: 'no-store',
   }
 
   const response = await fetch(url, config)
+
+  if (response.status === 401) {
+    const error = await response.json().catch(() => ({ detail: 'Unauthorized' }))
+    // If we're using an admin token and it's expired/invalid, log out locally
+    if (adminToken && !isVoteEndpoint && !isPublicCommunitySubmit) {
+      logout()
+    }
+    throw new Error(error.detail || 'Unauthorized')
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
@@ -88,6 +98,10 @@ export function approveArtist(id) {
   return request(`/artists/${id}/approve`, { method: 'PATCH' })
 }
 
+export function approveAllArtists() {
+  return request('/artists/approve-all', { method: 'POST' })
+}
+
 export function deleteArtist(id) {
   return request(`/artists/${id}`, { method: 'DELETE' })
 }
@@ -103,10 +117,13 @@ export function submitCommunityScandal(artistId, title, description, source_url)
 //  Scandals
 // ═══════════════════════════════════════════
 
-export function fetchScandals({ verified, artist_id } = {}) {
+export function fetchScandals(filters = {}) {
   const params = new URLSearchParams()
-  if (verified !== undefined && verified !== null) params.set('verified', verified)
-  if (artist_id) params.set('artist_id', artist_id)
+  if (filters.verified !== undefined && filters.verified !== null)
+    params.append('verified', filters.verified)
+  if (filters.reported !== undefined && filters.reported !== null)
+    params.append('reported', filters.reported)
+  if (filters.artist_id) params.append('artist_id', filters.artist_id)
   const qs = params.toString()
   return request(`/scandals${qs ? `?${qs}` : ''}`)
 }
@@ -122,12 +139,20 @@ export function verifyScandal(id) {
   return request(`/scandals/${id}/verify`, { method: 'PATCH' })
 }
 
+export function verifyScandalSource(scandalId, sourceId) {
+  return request(`/scandals/${scandalId}/sources/${sourceId}/verify`, { method: 'PATCH' })
+}
+
 export function deleteScandal(id) {
   return request(`/scandals/${id}`, { method: 'DELETE' })
 }
 
 export function deleteScandalSource(scandalId, sourceId) {
   return request(`/scandals/${scandalId}/sources/${sourceId}`, { method: 'DELETE' })
+}
+
+export function reportScandalSource(scandalId, sourceId) {
+  return request(`/scandals/${scandalId}/sources/${sourceId}/report`, { method: 'POST' })
 }
 
 export function submitScandalVote(id, vote) {

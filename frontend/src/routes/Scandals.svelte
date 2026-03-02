@@ -6,6 +6,7 @@
   let scandals = $state([])
   let loading = $state(true)
   let filterVerified = $state(null) // null = all, true = verified, false = unverified
+  let filterReported = $state(null) // null = all, true = reported
 
   // Group scandals by artist
   let groupedScandals = $derived.by(() => {
@@ -27,7 +28,10 @@
   async function loadScandals() {
     loading = true
     try {
-      scandals = await fetchScandals({ verified: filterVerified })
+      scandals = await fetchScandals({ 
+        verified: filterVerified,
+        reported: filterReported
+      })
     } catch (e) {
       showToast('error', `Failed to load scandals: ${e.message}`)
     } finally {
@@ -61,6 +65,13 @@
 
   function applyFilter(value) {
     filterVerified = value
+    filterReported = null
+    loadScandals()
+  }
+
+  function applyReportedFilter(value) {
+    filterReported = value
+    filterVerified = null
     loadScandals()
   }
 
@@ -104,6 +115,13 @@
       onclick={() => applyFilter(true)}
     >
       Verified
+    </button>
+    <button
+      class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
+        {filterReported === true ? 'bg-danger-glow text-danger' : 'text-text-secondary hover:text-text-primary'}"
+      onclick={() => applyReportedFilter(true)}
+    >
+      Reported
     </button>
   </div>
 

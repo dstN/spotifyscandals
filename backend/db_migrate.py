@@ -1,7 +1,7 @@
 import sqlite3
 
 def migrate():
-    conn = sqlite3.connect('skandal_tracker.db')
+    conn = sqlite3.connect('spotiscandals.db')
     cursor = conn.cursor()
     
     try:

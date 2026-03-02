@@ -42,6 +42,7 @@ def get_stats(db: Session = Depends(get_db)):
 def list_scandals(
     request: Request,
     verified: bool | None = Query(None, description="Filter by verification status"),
+    reported: bool | None = Query(None, description="Filter by reported status"),
     artist_id: int | None = Query(None, description="Filter by artist"),
     db: Session = Depends(get_db),
 ):
@@ -56,6 +57,8 @@ def list_scandals(
 
     if verified is not None:
         query = query.filter(Scandal.verified == verified)
+    if reported is True:
+        query = query.filter(Scandal.sources.any(ScandalSource.is_reported == True))
     if artist_id is not None:
         query = query.filter(Scandal.artist_id == artist_id)
 
@@ -82,7 +85,14 @@ def list_scandals(
                 vote_count=vote_count,
                 user_vote=user_vote,
                 sources=[
-                    {"id": src.id, "source_url": src.source_url, "source_title": src.source_title, "created_at": src.created_at}
+                    {
+                        "id": src.id, 
+                        "source_url": src.source_url, 
+                        "source_title": src.source_title, 
+                        "is_reported": src.is_reported,
+                        "is_verified": src.is_verified,
+                        "created_at": src.created_at
+                    }
                     for src in s.sources
                 ],
             )
@@ -136,73 +146,49 @@ def submit_scandal_vote(
 
 from database import SessionLocal
 import asyncio
-
+import subprocess
+import tempfile
+import sys
+import os
+import json
 from datetime import datetime, timezone, timedelta
 
-async def _process_scan_background(artist_data: list[dict]):
-    """Background task to call Gemini and save results to the database."""
+def _trigger_detached_scan(artist_data: list[dict]):
+    """Launch the scanner_cli.py as a detached process."""
+    # Create a temporary file to pass the data
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+        json.dump(artist_data, tmp)
+        tmp_path = tmp.name
+
+    # Path to the scanner_cli.py (relative to backend)
+    # Get current file's directory (backend/routers/scandals.py)
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cli_path = os.path.join(backend_dir, "scanner_cli.py")
+    python_exe = sys.executable
+
+    # Launch detached process
+    # creationflags for Windows to ensure it survives
+    creationflags = 0
+    if sys.platform == "win32":
+        # CREATE_NEW_PROCESS_GROUP ensures it runs independently
+        # DETACHED_PROCESS ensures it has no console (optional but good for background)
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+
     try:
-        results = await scan_artists_for_scandals(artist_data)
-        
-        # We need a new DB session for the background task
-        # since the request's Depends(get_db) session will already be closed
-        db = SessionLocal()
-        try:
-            for artist_result in results:
-                artist_id = artist_result.get("artist_id")
-                
-                # Update last scanned time
-                db_artist = db.query(Artist).filter(Artist.id == artist_id).first()
-                if db_artist:
-                    db_artist.last_scanned_at = datetime.now(timezone.utc)
-
-                for scandal_data in artist_result.get("scandals", []):
-                    description = scandal_data.get("description", "").strip()
-                    if not description:
-                        continue
-
-                    existing = (
-                        db.query(Scandal)
-                        .filter(
-                            Scandal.artist_id == artist_id,
-                            Scandal.description == description,
-                        )
-                        .first()
-                    )
-                    if existing:
-                        continue
-
-                    scandal = Scandal(
-                        artist_id=artist_id,
-                        title=scandal_data.get("title", "").strip(),
-                        description=description,
-                        verified=False,
-                    )
-                    db.add(scandal)
-                    db.flush()
-
-                    for source_item in scandal_data.get("sources", []):
-                        # sources is now a list of {"url": ..., "title": ...} dicts
-                        if isinstance(source_item, dict):
-                            url = source_item.get("url", "").strip()
-                            title = source_item.get("title", None)
-                        else:
-                            # fallback: plain string
-                            url = str(source_item).strip()
-                            title = None
-                        if url:
-                            source = ScandalSource(
-                                scandal_id=scandal.id,
-                                source_url=url,
-                                source_title=title,
-                            )
-                            db.add(source)
-
-            db.commit()
-        finally:
-            db.close()
+        # We no longer redirect OS-level stdout here so the user can see it in their terminal.
+        # Instead, scanner_cli.py will duplicate its own output to the log file.
+        subprocess.Popen(
+            [python_exe, cli_path, tmp_path],
+            cwd=backend_dir,
+            creationflags=creationflags,
+            start_new_session=True if sys.platform != "win32" else False
+        )
+        print(f"[Scandal-Router] Detached scan process started. UI Logs enabled.")
     except Exception as e:
-        print(f"Background scan failed: {e}")
+        print(f"[Scandal-Router] Failed to launch detached scan: {e}")
+        # Cleanup temp file if launch failed
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 @router.post("/scan")
 async def scan_for_scandals(
@@ -247,8 +233,14 @@ async def scan_for_scandals(
             "existing_scandals": existing_scandals
         })
 
-    # Queue the background task
-    background_tasks.add_task(_process_scan_background, artist_data)
+    # Trigger the detached scan process
+    # Check if a scan is already running to avoid conflicts
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    lock_path = os.path.join(backend_dir, "scan.lock")
+    if os.path.exists(lock_path):
+        raise HTTPException(status_code=400, detail="A scan is already in progress. Please wait for it to finish.")
+
+    _trigger_detached_scan(artist_data)
 
     return {"message": f"Scan initiated for {len(artists_to_scan)} artists in the background. Check back later for results."}
 
@@ -277,6 +269,27 @@ def delete_scandal(scandal_id: int, db: Session = Depends(get_db), admin: str = 
     db.delete(scandal)
     db.commit()
     return {"detail": "Scandal deleted"}
+@router.patch("/{scandal_id}/sources/{source_id}/verify")
+def verify_scandal_source(
+    scandal_id: int, 
+    source_id: int, 
+    db: Session = Depends(get_db), 
+    admin: str = Depends(require_admin)
+):
+    """Toggle the verification status of a specific source."""
+    source = db.query(ScandalSource).filter(
+        ScandalSource.id == source_id,
+        ScandalSource.scandal_id == scandal_id
+    ).first()
+    
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+        
+    source.is_verified = not source.is_verified
+    db.commit()
+    db.refresh(source)
+    
+    return {"id": source.id, "is_verified": source.is_verified}
 
 
 @router.delete("/{scandal_id}/sources/{source_id}")
@@ -298,3 +311,23 @@ def delete_scandal_source(
     db.delete(source)
     db.commit()
     return {"detail": "Source deleted"}
+
+
+@router.post("/{scandal_id}/sources/{source_id}/report")
+def report_scandal_source(
+    scandal_id: int, 
+    source_id: int, 
+    db: Session = Depends(get_db)
+):
+    """Flag a source as reported (public endpoint)."""
+    source = db.query(ScandalSource).filter(
+        ScandalSource.id == source_id,
+        ScandalSource.scandal_id == scandal_id
+    ).first()
+    
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+        
+    source.is_reported = True
+    db.commit()
+    return {"message": "Source reported successfully", "is_reported": True}

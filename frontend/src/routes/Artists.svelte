@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { fetchArtists, approveArtist, deleteArtist, scanForScandals } from '../lib/api.js'
+  import { fetchArtists, approveArtist, deleteArtist, scanForScandals, approveAllArtists } from '../lib/api.js'
   import { showToast } from '../lib/stores.js'
 
   let artists = $state([])
@@ -48,6 +48,17 @@
     }
   }
 
+  async function handleApproveAll() {
+    if (!confirm('Approve all pending artists?')) return
+    try {
+      const result = await approveAllArtists()
+      showToast('success', result.message)
+      await loadArtists()
+    } catch (e) {
+      showToast('error', e.message)
+    }
+  }
+
   async function scanApproved() {
     scanning = true
     try {
@@ -79,18 +90,27 @@
         Manage and approve artists for scandal scanning
       </p>
     </div>
-    <button
-      class="btn-primary inline-flex items-center gap-2"
-      onclick={scanApproved}
-      disabled={scanning}
-    >
-      {#if scanning}
-        <div class="spinner"></div>
-        Scanning…
-      {:else}
-        ⚡ Scan Approved Artists
-      {/if}
-    </button>
+    <div class="flex items-center gap-3">
+      <button
+        class="btn-outline border-success text-success inline-flex items-center gap-2"
+        onclick={handleApproveAll}
+        aria-label="Approve all pending artists"
+      >
+        ✓ Approve All Pending
+      </button>
+      <button
+        class="btn-primary inline-flex items-center gap-2"
+        onclick={scanApproved}
+        disabled={scanning}
+      >
+        {#if scanning}
+          <div class="spinner"></div>
+          Scanning…
+        {:else}
+          ⚡ Scan Approved Artists
+        {/if}
+      </button>
+    </div>
   </div>
 
   <!-- Filters -->

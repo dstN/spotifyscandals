@@ -3,7 +3,8 @@ Application configuration.
 Loads environment variables via pydantic-settings for type-safe access.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
 from functools import lru_cache
 import os
 from dotenv import load_dotenv
@@ -30,7 +31,17 @@ class Settings(BaseSettings):
     jwt_secret: str = "super_secret_jwt_key_change_in_production"
 
     # ─── Database ───
-    database_url: str = "sqlite:///./skandal_tracker.db"
+    database_url: str = Field(default="sqlite:///./spotiscandals.db")
+
+    @field_validator("database_url")
+    @classmethod
+    def make_absolute(cls, v: str) -> str:
+        """Ensure database_url is absolute if it's a relative sqlite path."""
+        if v.startswith("sqlite:///./"):
+            db_name = v.replace("sqlite:///./", "")
+            db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), db_name))
+            return f"sqlite:///{db_path}"
+        return v
 
     # ─── CORS ───
     cors_origins: str = "http://localhost:5173"
@@ -39,9 +50,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    class Config:
-        env_file = "../.env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(os.path.dirname(__file__), "..", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
 
 @lru_cache()

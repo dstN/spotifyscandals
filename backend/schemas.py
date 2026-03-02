@@ -59,6 +59,8 @@ class ScandalSourceResponse(BaseModel):
     id: int
     source_url: str
     source_title: Optional[str] = None
+    is_reported: bool = False
+    is_verified: bool = False
     created_at: datetime
 
     class Config:

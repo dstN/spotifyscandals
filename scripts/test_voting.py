@@ -26,7 +26,7 @@ to_encode = {
 encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
 
 # Check if we have any scandals
-db_path = os.path.join(backend_dir, 'skandal_tracker.db')
+db_path = os.path.join(backend_dir, 'spotiscandals.db')
 conn = sqlite3.connect(db_path)
 cur = conn.cursor()
 cur.execute("SELECT id FROM scandals LIMIT 1")

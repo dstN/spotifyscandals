@@ -104,7 +104,7 @@
 <div class="fade-in space-y-6">
   <!-- Header Route Binding -->
   <div class="flex items-center gap-4">
-    <a href="#/admin/community" class="flex h-10 w-10 items-center justify-center rounded-xl bg-glass text-text-secondary transition-colors hover:bg-glass-hover hover:text-text-primary no-underline">
+    <a href="#/admin/community" class="flex h-10 w-10 items-center justify-center rounded-xl bg-glass text-text-secondary transition-colors hover:bg-glass-hover hover:text-text-primary no-underline" aria-label="Back to community inbox">
       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
       </svg>
@@ -134,7 +134,7 @@
       <a href="#/admin/community" class="mt-4 btn-outline inline-block text-sm no-underline">Return to Inbox</a>
     </div>
   {:else}
-    <div class="space-y-4">
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2 content-start">
       {#each submissions as sub (sub.id)}
         <div class="glass p-6 {reviewingId === sub.id ? 'ring-2 ring-spotify shadow-spotify-glow' : ''}">
           
@@ -211,18 +211,18 @@
               
             <div class="space-y-4">
               <div>
-                <label class="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-1">Title</label>
-                <input type="text" bind:value={reviewState.title} class="input-glass w-full" />
+                <label for="review-title" class="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-1">Title</label>
+                <input id="review-title" type="text" bind:value={reviewState.title} class="input-glass w-full" />
               </div>
               
               <div>
-                <label class="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-1">Description</label>
-                <textarea bind:value={reviewState.description} rows="5" class="input-glass w-full resize-none leading-relaxed"></textarea>
+                <label for="review-description" class="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-1">Description</label>
+                <textarea id="review-description" bind:value={reviewState.description} rows="5" class="input-glass w-full resize-none leading-relaxed"></textarea>
               </div>
               
               <div>
                 <div class="flex items-center justify-between mb-2">
-                  <label class="block text-xs font-medium text-text-tertiary uppercase tracking-wider">Source URLs</label>
+                  <label for="review-source-0" class="block text-xs font-medium text-text-tertiary uppercase tracking-wider">Source URLs</label>
                   <button type="button" onclick={() => reviewState.sources.push('')} class="text-xs font-medium text-text-secondary hover:text-text-primary transition-colors cursor-pointer">
                     + Add Source
                   </button>
@@ -231,9 +231,9 @@
                 <div class="space-y-2">
                   {#each reviewState.sources as source, idx}
                     <div class="flex gap-2">
-                      <input type="url" bind:value={reviewState.sources[idx]} class="input-glass flex-1" placeholder="https://..." />
+                      <input id="review-source-{idx}" type="url" bind:value={reviewState.sources[idx]} class="input-glass flex-1" placeholder="https://..." />
                       {#if reviewState.sources.length > 1}
-                        <button type="button" onclick={() => reviewState.sources.splice(idx, 1)} class="flex items-center gap-2 px-3 rounded-xl border border-glass-border text-text-tertiary hover:border-danger hover:bg-danger-glow hover:text-danger cursor-pointer flex-shrink-0 transition-colors">
+                        <button type="button" onclick={() => reviewState.sources.splice(idx, 1)} class="flex items-center gap-2 px-3 rounded-xl border border-glass-border text-text-tertiary hover:border-danger hover:bg-danger-glow hover:text-danger cursor-pointer flex-shrink-0 transition-colors" aria-label="Remove source">
                           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
                       {/if}

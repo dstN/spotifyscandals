@@ -108,7 +108,14 @@ def get_artist(request: Request, artist_id: int, db: Session = Depends(get_db)):
             "vote_count": s_vote_count,
             "user_vote": s_user_vote,
             "sources": [
-                {"id": src.id, "source_url": src.source_url, "created_at": src.created_at}
+                {
+                    "id": src.id, 
+                    "source_url": src.source_url, 
+                    "source_title": src.source_title,
+                    "is_verified": src.is_verified,
+                    "is_reported": src.is_reported,
+                    "created_at": src.created_at
+                }
                 for src in s.sources
             ],
         })
@@ -147,6 +154,19 @@ def approve_artist(artist_id: int, db: Session = Depends(get_db), admin: str = D
     db.refresh(artist)
 
     return {"id": artist.id, "name": artist.name, "approved": artist.approved}
+
+
+@router.post("/approve-all")
+def approve_all_artists(db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Approve all pending artists."""
+    pending_artists = db.query(Artist).filter(Artist.approved == False).all()
+    count = len(pending_artists)
+    
+    for artist in pending_artists:
+        artist.approved = True
+        
+    db.commit()
+    return {"message": f"Successfully approved {count} artists", "count": count}
 
 
 @router.delete("/{artist_id}")

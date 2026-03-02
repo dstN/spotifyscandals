@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { fetchArtist, verifyScandal, deleteScandal, deleteScandalSource } from '../lib/api.js'
+  import { fetchArtist, verifyScandal, verifyScandalSource, deleteScandal, deleteScandalSource } from '../lib/api.js'
   import { showToast } from '../lib/stores.js'
 
   let { artistId } = $props()
@@ -37,6 +37,17 @@
       scandal.verified = result.verified
       scandals = [...scandals]
       showToast('success', result.verified ? 'Scandal verified' : 'Verification removed')
+    } catch (e) {
+      showToast('error', e.message)
+    }
+  }
+
+  async function toggleSourceVerification(scandal, source) {
+    try {
+      const result = await verifyScandalSource(scandal.id, source.id)
+      source.is_verified = result.is_verified
+      scandals = [...scandals] // Trigger reactivity
+      showToast('success', result.is_verified ? 'Source manually verified' : 'Source unverified')
     } catch (e) {
       showToast('error', e.message)
     }
@@ -108,6 +119,7 @@
     <button 
       onclick={goBack} 
       class="flex h-10 w-10 items-center justify-center rounded-xl bg-glass text-text-secondary transition-colors hover:bg-glass-hover hover:text-text-primary"
+      aria-label="Go back"
     >
       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -131,7 +143,7 @@
       <p class="text-lg text-text-secondary">No scandals found for this artist</p>
     </div>
   {:else}
-    <div class="space-y-4">
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2 content-start">
       {#each scandals as scandal (scandal.id)}
         <div class="glass p-6">
           <!-- Header row -->
@@ -168,13 +180,36 @@
                     href={source.source_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="group/link flex flex-1 w-full items-center gap-2 rounded-xl border border-glass-border px-4 py-2.5 text-sm text-text-secondary no-underline transition-all hover:border-glass-border-hover hover:bg-glass hover:text-text-primary overflow-hidden"
+                    class="group/link flex flex-1 w-full items-center gap-2 rounded-xl border px-4 py-2.5 text-sm no-underline transition-all overflow-hidden
+                      {source.is_reported ? 'border-danger/50 bg-danger-glow/30 text-danger' : 
+                       (!source.is_verified ? 'border-warning/30 bg-warning/5 text-text-tertiary hover:border-warning/50 hover:bg-warning/10' : 
+                       'border-glass-border text-text-secondary hover:border-glass-border-hover hover:bg-glass hover:text-text-primary')}"
                   >
-                    <span class="text-text-tertiary transition-colors group-hover/link:text-text-secondary flex-shrink-0 mt-0.5">↗</span>
+                    <span class="{source.is_reported ? 'text-danger' : 'text-text-tertiary'} transition-colors group-hover/link:text-text-secondary flex-shrink-0 mt-0.5">
+                      ↗
+                    </span>
                     <span class="break-all">
                       {source.source_title || formatSourceLabel(source.source_url)}
+                      {#if source.is_reported}
+                        <span class="ml-2 font-bold uppercase text-[10px] text-danger bg-danger/10 px-1.5 py-0.5 rounded">Reported</span>
+                      {:else if !source.is_verified}
+                        <span class="ml-2 font-bold uppercase text-[10px] text-warning bg-warning/10 border border-warning/20 px-1.5 py-0.5 rounded">Unverified</span>
+                      {/if}
                     </span>
                   </a>
+                  <button
+                    class="flex items-center justify-center w-10 h-10 rounded-xl border border-glass-border text-lg transition-all hover:bg-glass flex-shrink-0 cursor-pointer"
+                    title={source.is_verified ? 'Unverify Source' : 'Verify Source manually'}
+                    onclick={() => toggleSourceVerification(scandal, source)}
+                  >
+                    {#if source.is_reported}
+                      ⚠️
+                    {:else if source.is_verified}
+                      <span title="Verified by Gemini">✅</span>
+                    {:else}
+                      <span title="Unverified Source" class="opacity-50 grayscale hover:grayscale-0 transition-all">❓</span>
+                    {/if}
+                  </button>
                   <button
                     class="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-glass-border text-xs font-medium text-text-tertiary transition-all hover:border-danger hover:bg-danger-glow hover:text-danger flex-shrink-0"
                     title="Remove incorrect source"
@@ -187,6 +222,10 @@
                   </button>
                 </div>
               {/each}
+            </div>
+          {:else}
+            <div class="mt-4 rounded-xl border border-dashed border-glass-border p-4 text-center">
+              <p class="text-sm text-text-tertiary italic">No sources added to this scandal yet.</p>
             </div>
           {/if}
 

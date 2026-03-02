@@ -89,6 +89,8 @@ class ScandalSource(Base):
     )
     source_url = Column(Text, nullable=False)
     source_title = Column(String(255), nullable=True)  # Human-readable site name from grounding metadata
+    is_reported = Column(Boolean, default=False, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
     )
