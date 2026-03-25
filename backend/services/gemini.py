@@ -13,6 +13,8 @@ import asyncio
 import subprocess
 import os
 import re
+import time
+from collections import deque
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import httpx
@@ -21,6 +23,109 @@ from google.genai import types
 from config import get_settings
 from datetime import datetime, timezone
 from playwright.async_api import async_playwright
+
+
+# ─── In-Memory Rate Limiter ───
+
+class RateLimiter:
+    """
+    Process-level rate limiter for Gemini API calls.
+    Tracks per-minute and per-day counters for model and search calls.
+    In free_tier mode, blocks when limits are approached; in unlimited mode, only throttles RPM.
+    """
+
+    def __init__(self):
+        settings = get_settings()
+        self.mode = settings.scanner_mode.lower()
+        self.model_rpm = settings.gemini_model_rpm
+        self.model_rpd = settings.gemini_model_rpd
+        self.search_rpd = settings.gemini_search_rpd
+
+        # Per-minute sliding window (timestamps of recent model calls)
+        self._minute_window: deque[float] = deque()
+        # Daily counters (reset on first call each new UTC day)
+        self._day_key: str = ""
+        self._model_day_count: int = 0
+        self._search_day_count: int = 0
+        self._lock = asyncio.Lock()
+
+    def _reset_day_if_needed(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if today != self._day_key:
+            self._day_key = today
+            self._model_day_count = 0
+            self._search_day_count = 0
+
+    def _prune_minute_window(self):
+        now = time.monotonic()
+        while self._minute_window and (now - self._minute_window[0]) > 60:
+            self._minute_window.popleft()
+
+    async def acquire(self, uses_search: bool = False):
+        """
+        Wait until a request slot is available, then record the call.
+        Raises RuntimeError if daily limit is exhausted in free_tier mode.
+        """
+        async with self._lock:
+            self._reset_day_if_needed()
+
+            if self.mode == "free_tier":
+                # Check daily model limit
+                if self._model_day_count >= self.model_rpd:
+                    raise RuntimeError(
+                        f"Daily model request limit reached ({self.model_rpd} RPD). "
+                        "Scan paused — try again tomorrow or switch to unlimited mode."
+                    )
+                # Check daily search limit
+                if uses_search and self._search_day_count >= self.search_rpd:
+                    raise RuntimeError(
+                        f"Daily search grounding limit reached ({self.search_rpd} RPD). "
+                        "Scan paused — try again tomorrow or switch to unlimited mode."
+                    )
+
+            # RPM throttle (applies in all modes)
+            self._prune_minute_window()
+            if len(self._minute_window) >= self.model_rpm:
+                wait = 60 - (time.monotonic() - self._minute_window[0]) + 0.5
+                if wait > 0:
+                    print(f"[RateLimiter] RPM limit ({self.model_rpm}/min) reached — waiting {wait:.1f}s")
+                    # Release lock while sleeping so other tasks aren't blocked
+                    self._lock.release()
+                    try:
+                        await asyncio.sleep(wait)
+                    finally:
+                        await self._lock.acquire()
+                    self._prune_minute_window()
+
+            # Record the call
+            self._minute_window.append(time.monotonic())
+            self._model_day_count += 1
+            if uses_search:
+                self._search_day_count += 1
+
+    @property
+    def stats(self) -> dict:
+        self._reset_day_if_needed()
+        self._prune_minute_window()
+        return {
+            "mode": self.mode,
+            "model_rpm_used": len(self._minute_window),
+            "model_rpm_limit": self.model_rpm,
+            "model_rpd_used": self._model_day_count,
+            "model_rpd_limit": self.model_rpd,
+            "search_rpd_used": self._search_day_count,
+            "search_rpd_limit": self.search_rpd,
+        }
+
+
+# Singleton rate limiter instance (per-process)
+_rate_limiter: RateLimiter | None = None
+
+def get_rate_limiter() -> RateLimiter:
+    global _rate_limiter
+    if _rate_limiter is None:
+        _rate_limiter = RateLimiter()
+    return _rate_limiter
 
 
 # ─── Source Blocklist ───
@@ -311,6 +416,7 @@ async def scan_artist_for_scandals(artist: dict) -> dict:
     # NOTE: response_mime_type="application/json" is INCOMPATIBLE with tool use.
     # We ask for JSON in the prompt and extract it from the plain text response.
     try:
+        await get_rate_limiter().acquire(uses_search=True)
         response = await client.aio.models.generate_content(
             model="gemini-3-flash-preview",
             contents=prompt,
@@ -587,6 +693,7 @@ async def verify_source_relevance(source_url: str, title: str, description: str)
         Answer EXACTLY with a single word: YES or NO.
         """
         
+        await get_rate_limiter().acquire(uses_search=False)
         response = await asyncio.to_thread(
             client.models.generate_content,
             model="gemini-3-flash-preview",
@@ -647,6 +754,7 @@ Rules:
 
     # ── Primary: Gemini url_context (Gemini fetches the URL itself) ──
     try:
+        await get_rate_limiter().acquire(uses_search=False)
         response = await asyncio.to_thread(
             client.models.generate_content,
             model="gemini-3-flash-preview",
@@ -737,6 +845,7 @@ Scoring guide:
 - Respond with ONLY a single integer between 0 and 10. No explanation."""
 
     try:
+        await get_rate_limiter().acquire(uses_search=False)
         response = await asyncio.to_thread(
             client.models.generate_content,
             model="gemini-3-flash-preview",
@@ -749,6 +858,8 @@ Scoring guide:
         score = max(0, min(10, score))
         print(f"[Gemini-Score] Fallback score {score}/10 for: {source_url[:60]}")
         return score
+    except RuntimeError:
+        raise
     except Exception as e:
         print(f"[Gemini-Score] Fallback scoring failed: {e}")
         return 0
@@ -782,6 +893,7 @@ async def find_better_sources(artist_name: str, scandal_title: str, scandal_desc
         ]
         """
         
+        await get_rate_limiter().acquire(uses_search=True)
         response = await asyncio.to_thread(
             client.models.generate_content,
             model="gemini-3-flash-preview",
@@ -837,8 +949,150 @@ async def find_better_sources(artist_name: str, scandal_title: str, scandal_desc
         print(f"[Gemini-Heal] Failed to find new sources: {e}")
         return []
 
-        scandal_count = len(result.get("scandals", []))
-        print(f"[Gemini] Found {scandal_count} scandal(s) for {artist['name']}")
-        results.append(result)
 
-    return results
+# ═══════════════════════════════════════════
+#  Gemini Batch API
+# ═══════════════════════════════════════════
+
+def create_batch_requests(artists: list[dict]) -> list[dict]:
+    """
+    Build inline batch request dicts for `client.batches.create()`.
+    Each request is one artist scan with Google Search grounding.
+    """
+    current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    requests = []
+    for artist in artists:
+        prompt = _build_prompt(
+            artist_name=artist["name"],
+            spotify_id=artist["spotify_id"],
+            current_date=current_date,
+            existing_scandals=artist.get("existing_scandals", []),
+        )
+        requests.append({
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "config": {
+                "tools": [{"google_search": {}}],
+            },
+        })
+    return requests
+
+
+def submit_batch_job(artists: list[dict]) -> str:
+    """
+    Submit a batch of artist scan requests to the Gemini Batch API.
+    Returns the batch job name (ID) for polling.
+    """
+    client = _get_client()
+    requests = create_batch_requests(artists)
+
+    print(f"[Gemini-Batch] Submitting batch with {len(requests)} requests...")
+
+    batch_job = client.batches.create(
+        model="gemini-3-flash-preview",
+        src=requests,
+        config=types.CreateBatchJobConfig(
+            display_name=f"scandal-scan-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+        ),
+    )
+
+    job_name = batch_job.name
+    print(f"[Gemini-Batch] Job submitted: {job_name} (state: {batch_job.state})")
+    return job_name
+
+
+def poll_batch_job(job_name: str) -> dict:
+    """
+    Check the status of a batch job.
+    Returns dict with 'state' and optionally 'responses' if completed.
+    """
+    client = _get_client()
+    job = client.batches.get(name=job_name)
+
+    result = {
+        "name": job.name,
+        "state": str(job.state.name) if hasattr(job.state, "name") else str(job.state),
+    }
+
+    if result["state"] == "JOB_STATE_SUCCEEDED":
+        # Extract inline responses
+        responses = []
+        if hasattr(job, "dest") and job.dest and hasattr(job.dest, "inlined_responses"):
+            for resp in job.dest.inlined_responses:
+                responses.append(resp)
+        result["responses"] = responses
+
+    return result
+
+
+def parse_batch_response(response, artist: dict) -> dict:
+    """
+    Parse a single batch response into the same format as scan_artist_for_scandals.
+    Returns dict: {"artist_id": ..., "artist_name": ..., "scandals": [...]}
+    """
+    try:
+        raw_text = ""
+        if hasattr(response, "response"):
+            inner = response.response
+            if hasattr(inner, "text"):
+                raw_text = inner.text.strip()
+            elif hasattr(inner, "candidates") and inner.candidates:
+                for part in inner.candidates[0].content.parts:
+                    if hasattr(part, "text") and part.text:
+                        raw_text += part.text
+                raw_text = raw_text.strip()
+
+        if not raw_text:
+            return {"artist_id": artist["id"], "artist_name": artist["name"], "scandals": []}
+
+        # Strip markdown fences
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            raw_text = "\n".join(lines[1:-1]).strip()
+
+        # Parse JSON
+        try:
+            result = json.loads(raw_text)
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', raw_text)
+            if match:
+                result = json.loads(match.group())
+            else:
+                return {"artist_id": artist["id"], "artist_name": artist["name"], "scandals": []}
+
+        if isinstance(result, dict) and "scandals" in result:
+            scandals = result["scandals"]
+        elif isinstance(result, list):
+            scandals = result
+        else:
+            scandals = []
+
+        # Extract grounding sources from batch response
+        grounding_sources = []
+        try:
+            inner = response.response
+            if hasattr(inner, "candidates") and inner.candidates:
+                gm = getattr(inner.candidates[0], "grounding_metadata", None)
+                if gm:
+                    chunks = getattr(gm, "grounding_chunks", None) or []
+                    for chunk in chunks:
+                        web = getattr(chunk, "web", None)
+                        if web:
+                            uri = getattr(web, "uri", None)
+                            title = getattr(web, "title", None)
+                            if uri and not is_blocked_domain(uri):
+                                grounding_sources.append({"url": uri, "title": title})
+
+                    # Attribute sources to scandals
+                    grounding_supports = getattr(gm, "grounding_supports", None) or []
+                    inner_text = inner.text if hasattr(inner, "text") else raw_text
+                    _match_sources_to_scandals(scandals, grounding_sources, inner_text, grounding_supports)
+        except Exception as e:
+            print(f"[Gemini-Batch] Grounding extraction failed for {artist['name']}: {e}")
+            for s in scandals:
+                s["sources"] = []
+
+        return {"artist_id": artist["id"], "artist_name": artist["name"], "scandals": scandals}
+
+    except Exception as e:
+        print(f"[Gemini-Batch] Failed to parse batch response for {artist['name']}: {e}")
+        return {"artist_id": artist["id"], "artist_name": artist["name"], "scandals": []}

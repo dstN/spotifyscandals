@@ -1,32 +1,32 @@
 <script>
   import { onMount } from 'svelte'
-  import { publicToken, showToast } from '../../lib/stores.js'
+  import { publicToken, spotifyAccessToken, showToast } from '../../lib/stores.js'
 
   let error = $state(null)
   
   onMount(() => {
-    // URL format: /#/auth/callback?token=... or /#/auth/error?message=...
-    const hash = window.location.hash.slice(1) // "/auth/callback?token=xyz"
-    const [path, queryString] = hash.split('?')
-    const params = new URLSearchParams(queryString || '')
+    const path = window.location.pathname
+    const params = new URLSearchParams(window.location.search)
 
     if (path === '/auth/error') {
       error = params.get('message') || 'Unknown authentication error'
       showToast('error', `Login failed: ${error}`)
       setTimeout(() => {
-        window.location.hash = '#/'
+        history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate'))
       }, 3000)
     } else if (path === '/auth/callback') {
       const token = params.get('token')
+      const spotifyToken = params.get('spotify_token')
       if (token) {
         publicToken.set(token)
+        if (spotifyToken) spotifyAccessToken.set(spotifyToken)
         showToast('success', 'Logged in with Spotify!')
-        window.location.hash = '#/'
+        history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate'))
       } else {
         error = 'No token received from Spotify'
         showToast('error', error)
         setTimeout(() => {
-          window.location.hash = '#/'
+          history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate'))
         }, 3000)
       }
     }
@@ -43,7 +43,7 @@
       <h2 class="text-xl font-bold text-text-primary mb-2">Login Failed</h2>
       <p class="text-text-secondary text-sm">{error}</p>
       <div class="mt-6 flex justify-center">
-        <a href="#/" class="btn-primary" onclick={(e) => { e.preventDefault(); window.location.hash = '#/'; }}>Return Home</a>
+        <a href="/" class="btn-primary">Return Home</a>
       </div>
     {:else}
       <h2 class="text-xl font-bold text-text-primary mb-2">Authenticating</h2>

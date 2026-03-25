@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { fetchArtist, fetchScandals, submitScandalVote, submitCommunityScandal, reportScandalSource } from '../../lib/api.js'
+  import { fetchArtist, fetchScandals, submitScandalVote, submitCommunityScandal, reportScandalSource, submitCommunitySource } from '../../lib/api.js'
   import { showToast, spotifyUser, publicToken } from '../../lib/stores.js'
 
   let { params } = $props()
@@ -53,7 +53,7 @@
   let voteValues = $state({}); // Track slider values live while dragging
 
   async function handleVote(scandalId, voteValue) {
-    if (!voteValue || voteValue < 1 || voteValue > 10) return;
+    if (voteValue == null || voteValue < 0 || voteValue > 10) return;
     
     votingState[scandalId] = true;
     try {
@@ -96,6 +96,29 @@
   let communityDesc = $state("")
   let communitySources = $state([""])
   let isSubmittingCommunity = $state(false)
+
+  let sourceSubmitScandalId = $state(null)
+  let sourceSubmitUrl = $state("")
+  let isSubmittingSource = $state(false)
+
+  async function handleSourceSubmit(scandalId) {
+    if (!sourceSubmitUrl.trim()) return
+    isSubmittingSource = true
+    try {
+      await submitCommunitySource(scandalId, sourceSubmitUrl.trim())
+      showToast('success', 'Source submitted for review. Thanks!')
+      sourceSubmitScandalId = null
+      sourceSubmitUrl = ""
+    } catch (e) {
+      if (e.message.includes('401')) {
+        showToast('error', 'Please login with Spotify to submit sources')
+      } else {
+        showToast('error', `Failed to submit source: ${e.message}`)
+      }
+    } finally {
+      isSubmittingSource = false
+    }
+  }
 
   async function handleCommunitySubmit() {
     isSubmittingCommunity = true
@@ -154,7 +177,7 @@
   </div>
 
   <div class="mb-8 pt-6">
-    <a href="#/" class="text-sm font-medium text-text-tertiary transition-colors hover:text-text-primary">
+    <a href="/" class="text-sm font-medium text-text-tertiary transition-colors hover:text-text-primary">
       &larr; Back to Search
     </a>
   </div>
@@ -305,8 +328,8 @@
                         
                         <div class="flex flex-col items-center justify-end">
                           <span class="text-[10px] text-text-tertiary mb-1">Severity Rating</span>
-                          <span class={`text-3xl font-black leading-none ${getSeverityColor(voteValues[scandal.id] || scandal.user_vote || 5)}`}>
-                            {voteValues[scandal.id] || scandal.user_vote || 5}
+                          <span class={`text-3xl font-black leading-none ${getSeverityColor(voteValues[scandal.id] ?? scandal.user_vote ?? 5)}`}>
+                            {voteValues[scandal.id] ?? scandal.user_vote ?? 5}
                           </span>
                         </div>
                         
@@ -315,10 +338,10 @@
                       
                       <input 
                         type="range" 
-                        min="1" 
+                        min="0" 
                         max="10" 
                         step="1" 
-                        value={voteValues[scandal.id] || scandal.user_vote || 5} 
+                        value={voteValues[scandal.id] ?? scandal.user_vote ?? 5} 
                         disabled={votingState[scandal.id]}
                         oninput={(e) => { voteValues[scandal.id] = parseInt(e.target.value); }}
                         onchange={(e) => handleVote(scandal.id, parseInt(e.target.value))}
@@ -326,7 +349,7 @@
                       />
                       
                       <div class="flex justify-between items-center mt-2">
-                        {#if scandal.user_vote}
+                        {#if scandal.user_vote != null}
                           <span class="text-sm text-accent font-medium bg-accent/10 px-3 py-1 rounded-full">Your vote: {scandal.user_vote}</span>
                         {:else}
                           <span class="text-sm text-text-tertiary font-medium">Slide to cast your vote</span>
@@ -400,6 +423,43 @@
                     </div>
                   </div>
                 {/if}
+
+                <!-- Submit a Source -->
+                <div class="mt-4 pt-4 border-t border-glass-border/30">
+                  {#if sourceSubmitScandalId === scandal.id}
+                    {#if $spotifyUser}
+                      <form class="flex gap-2" onsubmit={(e) => { e.preventDefault(); handleSourceSubmit(scandal.id); }}>
+                        <input
+                          type="url"
+                          bind:value={sourceSubmitUrl}
+                          required
+                          placeholder="https://..."
+                          class="flex-1 rounded-xl border border-glass-border bg-bg-secondary/50 px-4 py-2 text-sm text-text-primary focus:border-glass-border-hover focus:outline-none"
+                        />
+                        <button type="submit" disabled={isSubmittingSource} class="btn-spotify px-4 py-2 text-xs shrink-0">
+                          {isSubmittingSource ? 'Sending...' : 'Submit'}
+                        </button>
+                        <button type="button" onclick={() => { sourceSubmitScandalId = null; sourceSubmitUrl = "" }} class="px-3 py-2 rounded-xl border border-glass-border text-xs text-text-tertiary hover:text-text-primary transition-colors cursor-pointer shrink-0">
+                          Cancel
+                        </button>
+                      </form>
+                    {:else}
+                      <div class="flex items-center gap-3">
+                        <p class="text-sm text-text-secondary">Login to submit a source.</p>
+                        <a href="/api/public/auth/spotify/login" class="btn-spotify text-xs px-3 py-1.5 no-underline flex items-center gap-1">
+                          <span>Login</span>
+                        </a>
+                      </div>
+                    {/if}
+                  {:else}
+                    <button
+                      onclick={() => sourceSubmitScandalId = scandal.id}
+                      class="text-xs font-medium text-text-tertiary hover:text-spotify transition-colors cursor-pointer"
+                    >
+                      + Submit a source for this scandal
+                    </button>
+                  {/if}
+                </div>
               </div>
             {/if}
           </div>

@@ -27,7 +27,7 @@
 <div class="fade-in mx-auto max-w-2xl space-y-8 pt-12 pb-20 relative">
   <!-- Back Button -->
   <div class="mb-4">
-    <a href="#/" class="text-sm font-medium text-text-tertiary transition-colors hover:text-text-primary no-underline">
+    <a href="/" class="text-sm font-medium text-text-tertiary transition-colors hover:text-text-primary no-underline">
       &larr; Back to Search
     </a>
   </div>
@@ -103,7 +103,7 @@
       </div>
 
       <div class="flex gap-3">
-        <a href="#/artists" class="btn-spotify inline-block flex-1 text-center no-underline py-2">
+        <a href="/artists" class="btn-spotify inline-block flex-1 text-center no-underline py-2">
           Review Artists →
         </a>
         <button
@@ -113,6 +113,37 @@
           Submit Another
         </button>
       </div>
+
+      <!-- Artist Grid -->
+      {#if result.artists && result.artists.length > 0}
+        <div class="pt-2">
+          <h3 class="mb-3 text-sm font-semibold text-text-secondary">Artists in this Playlist</h3>
+          <div class="grid gap-3 sm:grid-cols-2">
+            {#each result.artists as artist (artist.id)}
+              <a 
+                href="/artist/{artist.id}" 
+                class="glass group/card relative flex items-center gap-3 p-3 transition-all hover:-translate-y-1 block no-underline"
+              >
+                <img
+                  src={artist.image_url || 'https://misc.scdn.co/liked-songs/liked-songs-300.png'}
+                  alt="{artist.name} cover"
+                  class="h-12 w-12 rounded-full object-cover ring-2 ring-glass-border group-hover/card:ring-accent transition-colors"
+                />
+                <div class="min-w-0 flex-1">
+                  <h4 class="truncate text-sm font-bold text-text-primary group-hover/card:text-accent transition-colors">
+                    {artist.name}
+                  </h4>
+                  {#if artist.scandal_count > 0}
+                    <p class="text-xs text-text-secondary">
+                      {artist.scandal_count} scandal{artist.scandal_count === 1 ? '' : 's'}
+                    </p>
+                  {/if}
+                </div>
+              </a>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 

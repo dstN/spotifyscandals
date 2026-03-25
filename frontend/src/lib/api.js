@@ -22,8 +22,9 @@ async function request(path, options = {}) {
 
   const isVoteEndpoint = path.includes('/vote')
   const isPublicCommunitySubmit = path.includes('/artists/') && path.includes('/community-scandals')
+  const isPublicCommunitySourceSubmit = path.includes('/community-sources') && !path.includes('/approve')
 
-  if ((isVoteEndpoint || isPublicCommunitySubmit) && userToken) {
+  if ((isVoteEndpoint || isPublicCommunitySubmit || isPublicCommunitySourceSubmit) && userToken) {
     // These public endpoints strictly require a public user token
     headers['Authorization'] = `Bearer ${userToken}`
   } else if (adminToken) {
@@ -65,6 +66,10 @@ async function request(path, options = {}) {
 
 export function fetchStats() {
   return request('/scandals/stats')
+}
+
+export function fetchPendingCount() {
+  return request('/community-scandals/pending-count')
 }
 
 // ═══════════════════════════════════════════
@@ -135,6 +140,10 @@ export function scanForScandals(artistIds = []) {
   })
 }
 
+export function triggerAutoScan() {
+  return request('/admin/trigger-auto-scan', { method: 'POST' })
+}
+
 export function verifyScandal(id) {
   return request(`/scandals/${id}/verify`, { method: 'PATCH' })
 }
@@ -162,6 +171,20 @@ export function submitScandalVote(id, vote) {
   })
 }
 
+export function addSourceToScandal(scandalId, sourceUrl) {
+  return request(`/scandals/${scandalId}/sources`, {
+    method: 'POST',
+    body: JSON.stringify({ source_url: sourceUrl }),
+  })
+}
+
+export function submitCommunitySource(scandalId, sourceUrl) {
+  return request(`/scandals/${scandalId}/community-sources`, {
+    method: 'POST',
+    body: JSON.stringify({ source_url: sourceUrl }),
+  })
+}
+
 // ═══════════════════════════════════════════
 //  Community Submissions Admin endpoints
 // ═══════════════════════════════════════════
@@ -183,6 +206,22 @@ export async function verifyCommunityScandal(submissionId, data) {
 
 export async function rejectCommunityScandal(submissionId) {
   return request(`/community-scandals/${submissionId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function fetchPendingCommunitySources() {
+  return request('/community-scandals/sources')
+}
+
+export async function approveCommunitySource(sourceId) {
+  return request(`/community-scandals/sources/${sourceId}/approve`, {
+    method: 'POST',
+  })
+}
+
+export async function rejectCommunitySource(sourceId) {
+  return request(`/community-scandals/sources/${sourceId}`, {
     method: 'DELETE',
   })
 }

@@ -67,7 +67,7 @@
       
       // If no more submissions, kick them back to the summary screen
       if (submissions.length === 0) {
-        window.location.hash = '#/admin/community'
+        history.pushState({}, '', '/admin/community'); window.dispatchEvent(new PopStateEvent('popstate'))
       }
     } catch (e) {
       showToast('error', `Failed to verify: ${e.message}`)
@@ -85,7 +85,7 @@
       submissions = submissions.filter(s => s.id !== sub.id)
       
       if (submissions.length === 0) {
-        window.location.hash = '#/admin/community'
+        history.pushState({}, '', '/admin/community'); window.dispatchEvent(new PopStateEvent('popstate'))
       }
     } catch (e) {
       showToast('error', `Failed to reject: ${e.message}`)
@@ -114,7 +114,7 @@
 <div class="fade-in space-y-6">
   <!-- Header Route Binding -->
   <div class="flex items-center gap-4">
-    <a href="#/admin/community" class="flex h-10 w-10 items-center justify-center rounded-xl bg-glass text-text-secondary transition-colors hover:bg-glass-hover hover:text-text-primary no-underline" aria-label="Back to community inbox">
+    <a href="/admin/community" class="flex h-10 w-10 items-center justify-center rounded-xl bg-glass text-text-secondary transition-colors hover:bg-glass-hover hover:text-text-primary no-underline" aria-label="Back to community inbox">
       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
       </svg>
@@ -141,7 +141,7 @@
   {:else if submissions.length === 0}
     <div class="glass py-16 text-center mt-8">
       <p class="text-lg text-text-secondary">No pending submissions for this artist.</p>
-      <a href="#/admin/community" class="mt-4 btn-outline inline-block text-sm no-underline">Return to Inbox</a>
+      <a href="/admin/community" class="mt-4 btn-outline inline-block text-sm no-underline">Return to Inbox</a>
     </div>
   {:else}
     <div class="grid grid-cols-1 gap-4 xl:grid-cols-2 content-start">

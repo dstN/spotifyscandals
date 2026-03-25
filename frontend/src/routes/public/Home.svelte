@@ -1,12 +1,13 @@
 <script>
   import { onMount } from 'svelte'
   import { fetchArtists } from '../../lib/api.js'
-  import { showToast, spotifyUser, publicToken } from '../../lib/stores.js'
+  import { showToast, spotifyUser, publicToken, spotifyAccessToken } from '../../lib/stores.js'
 
   let artists = $state([])
   let loading = $state(true)
   let searchQuery = $state('')
   let showSearch = $state(false)
+  let userTopArtists = $state([])
 
   // ── Sorting ──
   let sortBy = $state('scandals') // 'scandals', 'name', 'severity', 'newest'
@@ -91,10 +92,40 @@
 
   function handlePublicLogout() {
     publicToken.set(null);
+    spotifyAccessToken.set(null);
     showToast('info', 'Logged out of Spotify');
   }
 
-  onMount(loadArtists)
+  async function loadTopArtists() {
+    let token
+    const unsub = spotifyAccessToken.subscribe(v => token = v)
+    unsub()
+    if (!token) return
+    try {
+      const resp = await fetch('https://api.spotify.com/v1/me/top/artists?limit=50', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (resp.status === 401) {
+        spotifyAccessToken.set(null)
+        return
+      }
+      if (!resp.ok) return
+      const data = await resp.json()
+      const topSpotifyIds = data.items.map(a => a.id)
+      // Intersect with our DB artists, preserving Spotify rank order
+      const dbMap = new Map(artists.map(a => [a.spotify_id, a]))
+      userTopArtists = topSpotifyIds
+        .filter(id => dbMap.has(id))
+        .map(id => dbMap.get(id))
+    } catch {
+      // Silently ignore — non-critical feature
+    }
+  }
+
+  onMount(async () => {
+    await loadArtists()
+    await loadTopArtists()
+  })
 
   let searchTimeout
   function handleSearchInput() {
@@ -145,7 +176,7 @@
         </p>
         
         <div class="flex flex-col sm:flex-row gap-4 w-full">
-          <a href="#/submit" class="btn-spotify flex-1 text-center no-underline py-3">
+          <a href="/submit" class="btn-spotify flex-1 text-center no-underline py-3">
             Submit a Playlist
           </a>
           <button 
@@ -185,6 +216,41 @@
           {/if}
         </div>
       {:else}
+        <!-- Your Top Artists Section -->
+        {#if userTopArtists.length > 0}
+          <div class="mb-10">
+            <h2 class="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
+              <span class="text-spotify">♫</span> Your Top Artists
+            </h2>
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {#each userTopArtists as artist (artist.id)}
+                <a 
+                  href="/artist/{artist.id}" 
+                  class="glass group/card relative flex items-center gap-4 p-4 transition-all hover:-translate-y-1 block no-underline ring-1 ring-spotify/20"
+                >
+                  <img
+                    src={artist.image_url || 'https://misc.scdn.co/liked-songs/liked-songs-300.png'}
+                    alt="{artist.name} cover"
+                    class="h-16 w-16 rounded-full object-cover ring-2 ring-spotify/40 group-hover/card:ring-spotify transition-colors"
+                  />
+                  <div class="min-w-0 flex-1">
+                    <h3 class="truncate text-lg font-bold text-text-primary group-hover/card:text-spotify transition-colors">
+                      {artist.name}
+                    </h3>
+                    <p class="mt-1 text-sm text-text-secondary">
+                      {artist.scandal_count} scandal{artist.scandal_count === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <div class="absolute right-4 top-1/2 -translate-y-1/2 text-text-tertiary opacity-0 transition-opacity group-hover/card:opacity-100">
+                    &rarr;
+                  </div>
+                </a>
+              {/each}
+            </div>
+          </div>
+          <h2 class="text-xl font-bold text-text-primary mb-4">All Tracked Artists</h2>
+        {/if}
+
         <!-- Count & Sorting Controls -->
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 px-1">
           <p class="text-sm text-text-tertiary">
@@ -220,7 +286,7 @@
         <div class="artist-grid grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {#each paginatedArtists as artist (artist.id)}
             <a 
-              href="#/artist/{artist.id}" 
+              href="/artist/{artist.id}" 
               class="glass group/card relative flex items-center gap-4 p-4 transition-all hover:-translate-y-1 block no-underline"
             >
               <img
@@ -314,7 +380,7 @@
       <!-- Submit Call to Action for Search View -->
       <div class="mt-20 text-center pb-10">
         <p class="text-text-secondary mb-4">Want to track a different artist?</p>
-        <a href="#/submit" class="btn-spotify inline-block flex items-center justify-center mx-auto no-underline shadow-none w-fit">Submit a Playlist</a>
+        <a href="/submit" class="btn-spotify inline-block flex items-center justify-center mx-auto no-underline shadow-none w-fit">Submit a Playlist</a>
       </div>
     </div>
   {/if}

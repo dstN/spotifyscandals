@@ -1,12 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session, joinedload
 from database import get_db
-from models import CommunityScandal, Scandal, ScandalSource, Artist
-from schemas import CommunityScandalResponse, ScandalResponse
+from models import CommunityScandal, CommunitySource, Scandal, ScandalSource, Artist
+from schemas import CommunityScandalResponse, CommunitySourceResponse, ScandalResponse
 from auth_deps import require_admin
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/community-scandals", tags=["Community Scandals"])
+
+
+@router.get("/pending-count")
+def get_pending_count(db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Return counts of pending community scandals and sources for notification badges."""
+    scandal_count = db.query(CommunityScandal).count()
+    source_count = db.query(CommunitySource).count()
+    return {"scandals": scandal_count, "sources": source_count, "total": scandal_count + source_count}
+
 
 @router.get("", response_model=list[CommunityScandalResponse])
 def get_pending_submissions(db: Session = Depends(get_db), admin: str = Depends(require_admin)):
@@ -99,3 +108,70 @@ def delete_community_submission(submission_id: int, db: Session = Depends(get_db
     db.delete(submission)
     db.commit()
     return {"detail": "Submission rejected and deleted."}
+
+
+# ═══════════════════════════════════════════
+#  Community Source Review (admin)
+# ═══════════════════════════════════════════
+
+@router.get("/sources", response_model=list[CommunitySourceResponse])
+def get_pending_community_sources(db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Fetch all pending community-submitted sources."""
+    sources = db.query(CommunitySource)\
+        .join(Scandal, CommunitySource.scandal_id == Scandal.id)\
+        .join(Artist, Scandal.artist_id == Artist.id)\
+        .options(
+            joinedload(CommunitySource.scandal).joinedload(Scandal.sources),
+            joinedload(CommunitySource.scandal).joinedload(Scandal.artist),
+        )\
+        .order_by(CommunitySource.created_at.desc())\
+        .all()
+
+    return [
+        CommunitySourceResponse(
+            id=s.id,
+            scandal_id=s.scandal_id,
+            spotify_user_id=s.spotify_user_id,
+            source_url=s.source_url,
+            created_at=s.created_at,
+            scandal_title=s.scandal.title if s.scandal else None,
+            scandal_description=s.scandal.description if s.scandal else None,
+            artist_name=s.scandal.artist.name if s.scandal and s.scandal.artist else None,
+            artist_image_url=s.scandal.artist.image_url if s.scandal and s.scandal.artist else None,
+            existing_sources=[
+                {"id": src.id, "source_url": src.source_url, "source_title": src.source_title}
+                for src in (s.scandal.sources if s.scandal else [])
+            ],
+        )
+        for s in sources
+    ]
+
+
+@router.post("/sources/{source_id}/approve")
+def approve_community_source(source_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Approve a community source — creates a verified ScandalSource and deletes the pending entry."""
+    cs = db.query(CommunitySource).filter(CommunitySource.id == source_id).first()
+    if not cs:
+        raise HTTPException(status_code=404, detail="Community source not found")
+
+    new_source = ScandalSource(
+        scandal_id=cs.scandal_id,
+        source_url=cs.source_url,
+        is_verified=True,
+    )
+    db.add(new_source)
+    db.delete(cs)
+    db.commit()
+    return {"detail": "Source approved and added to scandal"}
+
+
+@router.delete("/sources/{source_id}")
+def reject_community_source(source_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Reject and delete a community-submitted source."""
+    cs = db.query(CommunitySource).filter(CommunitySource.id == source_id).first()
+    if not cs:
+        raise HTTPException(status_code=404, detail="Community source not found")
+
+    db.delete(cs)
+    db.commit()
+    return {"detail": "Community source rejected and deleted"}

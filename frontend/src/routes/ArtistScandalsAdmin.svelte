@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { fetchArtist, verifyScandal, verifyScandalSource, deleteScandal, deleteScandalSource } from '../lib/api.js'
+  import { fetchArtist, verifyScandal, verifyScandalSource, deleteScandal, deleteScandalSource, addSourceToScandal } from '../lib/api.js'
   import { showToast } from '../lib/stores.js'
 
   let { artistId } = $props()
@@ -9,6 +9,30 @@
   let communityScandals = $state([])
   let artistName = $state('')
   let loading = $state(true)
+
+  let addSourceScandalId = $state(null)
+  let addSourceUrl = $state("")
+  let isAddingSource = $state(false)
+
+  async function handleAddSource(scandalId) {
+    if (!addSourceUrl.trim()) return
+    isAddingSource = true
+    try {
+      const newSource = await addSourceToScandal(scandalId, addSourceUrl.trim())
+      const scandal = scandals.find(s => s.id === scandalId)
+      if (scandal) {
+        scandal.sources = [...(scandal.sources || []), newSource]
+        scandals = [...scandals]
+      }
+      showToast('success', 'Source added')
+      addSourceScandalId = null
+      addSourceUrl = ""
+    } catch (e) {
+      showToast('error', `Failed to add source: ${e.message}`)
+    } finally {
+      isAddingSource = false
+    }
+  }
 
   async function loadScandals() {
     loading = true
@@ -109,7 +133,7 @@
   }
 
   function goBack() {
-    window.location.hash = '#/admin/scandals'
+    history.pushState({}, '', '/admin/scandals'); window.dispatchEvent(new PopStateEvent('popstate'))
   }
 </script>
 
@@ -228,6 +252,34 @@
               <p class="text-sm text-text-tertiary italic">No sources added to this scandal yet.</p>
             </div>
           {/if}
+
+          <!-- Admin: Add Source -->
+          <div class="mt-3">
+            {#if addSourceScandalId === scandal.id}
+              <form class="flex gap-2" onsubmit={(e) => { e.preventDefault(); handleAddSource(scandal.id); }}>
+                <input
+                  type="url"
+                  bind:value={addSourceUrl}
+                  required
+                  placeholder="https://..."
+                  class="flex-1 rounded-xl border border-glass-border bg-bg-secondary/50 px-4 py-2 text-sm text-text-primary focus:border-glass-border-hover focus:outline-none"
+                />
+                <button type="submit" disabled={isAddingSource} class="btn-spotify px-4 py-2 text-xs shrink-0">
+                  {isAddingSource ? 'Adding...' : 'Add'}
+                </button>
+                <button type="button" onclick={() => { addSourceScandalId = null; addSourceUrl = "" }} class="px-3 py-2 rounded-xl border border-glass-border text-xs text-text-tertiary hover:text-text-primary transition-colors cursor-pointer shrink-0">
+                  Cancel
+                </button>
+              </form>
+            {:else}
+              <button
+                onclick={() => addSourceScandalId = scandal.id}
+                class="text-xs font-medium text-text-tertiary hover:text-spotify transition-colors cursor-pointer"
+              >
+                + Add Source
+              </button>
+            {/if}
+          </div>
 
           <!-- Actions -->
           <div class="mt-4 flex gap-2 border-t border-glass-border pt-4">

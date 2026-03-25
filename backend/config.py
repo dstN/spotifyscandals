@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # ─── Google Gemini Pro ───
     gemini_api_key: str = ""
 
+    # ─── Gemini Rate Limits (Free Tier defaults) ───
+    scanner_mode: str = "free_tier"          # "free_tier" or "unlimited"
+    gemini_model_rpm: int = 15               # Requests per minute (model calls)
+    gemini_model_rpd: int = 1500             # Requests per day (model calls)
+    gemini_search_rpd: int = 1500            # Requests per day (Google Search grounding)
+    auto_scan_enabled: bool = True           # Enable Top 50 auto-scan on startup
+
     # ─── Auth (Admin User & JWT) ───
     admin_username: str = "admin"
     admin_password: str = "secret"

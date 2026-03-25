@@ -1,6 +1,6 @@
 <script>
   import { toast, authToken } from './lib/stores.js'
-  import { logout } from './lib/api.js'
+  import { logout, fetchPendingCount } from './lib/api.js'
 
   // Admin pages
   import Dashboard from './routes/Dashboard.svelte'
@@ -11,11 +11,13 @@
   import ArtistScandalsAdmin from './routes/ArtistScandalsAdmin.svelte'
   import CommunityAdmin from './routes/CommunityAdmin.svelte'
   import CommunityArtistAdmin from './routes/CommunityArtistAdmin.svelte'
+  import CommunitySourcesAdmin from './routes/CommunitySourcesAdmin.svelte'
 
   // Public pages
   import Home from './routes/public/Home.svelte'
   import ArtistScandals from './routes/public/ArtistScandals.svelte'
   import AuthCallback from './routes/public/AuthCallback.svelte'
+  import NotFound from './routes/NotFound.svelte'
 
   const navItems = [
     { path: '/admin', label: 'Dashboard', icon: '◈' },
@@ -24,17 +26,40 @@
     { path: '/admin/community', label: 'Community', icon: '👥' },
   ]
 
-  // Simple hash-based router
-  let currentPath = $state(window.location.hash.slice(1) || '/')
+  let pendingCount = $state(0)
+
+  async function loadPendingCount() {
+    try {
+      const data = await fetchPendingCount()
+      pendingCount = data.total || 0
+    } catch {
+      pendingCount = 0
+    }
+  }
+
+  // Path-based router using History API
+  let currentPath = $state(window.location.pathname)
   let isMobileMenuOpen = $state(false)
 
-  function handleHashChange() {
-    currentPath = window.location.hash.slice(1) || '/'
+  function handlePopState() {
+    currentPath = window.location.pathname
   }
 
   function navigate(path) {
-    window.location.hash = `#${path}`
+    history.pushState({}, '', path)
+    currentPath = path
     isMobileMenuOpen = false
+  }
+
+  function handleGlobalClick(e) {
+    const anchor = e.target.closest('a')
+    if (!anchor) return
+    const href = anchor.getAttribute('href')
+    if (!href || href.startsWith('http') || href.startsWith('mailto:') || anchor.target === '_blank') return
+    if (href.startsWith('/')) {
+      e.preventDefault()
+      navigate(href)
+    }
   }
 
   function handleLogout() {
@@ -43,6 +68,13 @@
   }
 
   let isAdminRoute = $derived(currentPath.startsWith('/admin'))
+
+  // Load pending community count when on admin routes
+  $effect(() => {
+    if (isAdminRoute && $authToken) {
+      loadPendingCount()
+    }
+  })
 
   // Protect admin routes (redirect to login if no token)
   $effect(() => {
@@ -56,9 +88,11 @@
   })
 </script>
 
-<svelte:window onhashchange={handleHashChange} />
+<svelte:window onpopstate={handlePopState} />
 
-<div class="flex min-h-screen bg-bg-primary">
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="flex min-h-screen bg-bg-primary" onclick={handleGlobalClick}>
   <!-- ═══ Background Pattern ═══ -->
   <div class="bg-decorations" aria-hidden="true">
     <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
@@ -146,6 +180,9 @@
             >
               <span class="text-base">{item.icon}</span>
               {item.label}
+              {#if item.path === '/admin/community' && pendingCount > 0}
+                <span class="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1.5 text-[10px] font-bold text-white">{pendingCount}</span>
+              {/if}
             </button>
           {/each}
         </nav>
@@ -169,6 +206,8 @@
           <ArtistScandalsAdmin artistId={parseInt(currentPath.split('/')[3])} />
         {:else if currentPath === '/admin/scandals'}
           <Scandals />
+        {:else if currentPath.startsWith('/admin/community/sources/')}
+          <CommunitySourcesAdmin artistName={decodeURIComponent(currentPath.split('/').slice(4).join('/'))} />
         {:else if currentPath.startsWith('/admin/community/') && currentPath.length > '/admin/community/'.length}
           <CommunityArtistAdmin artistId={parseInt(currentPath.split('/')[3])} />
         {:else if currentPath === '/admin/community'}
@@ -188,8 +227,10 @@
       {:else if currentPath === '/submit'}
         <!-- Reuse Submit component for public so they can add playlists -->
         <Submit />
-      {:else}
+      {:else if currentPath === '/'}
         <Home />
+      {:else}
+        <NotFound />
       {/if}
     </main>
   {/if}

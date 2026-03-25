@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database import SessionLocal
-from models import Artist, Scandal, ScandalSource
-from services.gemini import scan_artists_for_scandals, _resolve_url_deep, verify_source_relevance, find_better_sources, score_source_relevance, is_blocked_domain
+from models import Artist, Scandal, ScandalSource, BatchJob
+from services.gemini import scan_artists_for_scandals, _resolve_url_deep, verify_source_relevance, find_better_sources, score_source_relevance, is_blocked_domain, get_rate_limiter, submit_batch_job
 import logging
 
 # Global lock — ensures only one artist writes to SQLite at a time.
@@ -318,6 +318,10 @@ async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio
                 finally:
                     db.close()
                 
+        except RuntimeError as e:
+            # Rate limit exhausted — propagate to stop remaining tasks
+            print(f"[Scanner-CLI] ⛔ Rate limit hit for {artist['name']}: {e}")
+            raise
         except Exception as e:
             print(f"[Scanner-CLI] Gemini scan crashed for {artist['name']}: {e}")
             return 0
@@ -351,7 +355,56 @@ async def main():
         print(f"Failed to read JSON: {e}")
         sys.exit(1)
 
-    print(f"[Scanner-CLI] Starting concurrent scan for {len(artist_data)} artists (max 5 parallel)...")
+    # ─── Batch Mode (default — 50% token cost discount) ───
+    # Use --sync to force synchronous real-time scanning instead.
+    if "--sync" not in sys.argv:
+        print(f"[Scanner-CLI] Batch mode (default): submitting {len(artist_data)} artists to Gemini Batch API...")
+
+        # Enrich artists with existing scandals to avoid duplicates
+        with SessionLocal() as db:
+            for artist in artist_data:
+                existing_rows = (
+                    db.query(Scandal.title, Scandal.description)
+                    .filter(Scandal.artist_id == artist["id"])
+                    .all()
+                )
+                artist["existing_scandals"] = [
+                    {"title": r.title, "description": r.description}
+                    for r in existing_rows
+                ]
+
+        try:
+            job_name = submit_batch_job(artist_data)
+        except Exception as e:
+            print(f"[Scanner-CLI] Batch submission failed: {e}")
+            sys.exit(1)
+
+        # Save BatchJob to DB
+        with SessionLocal() as db:
+            batch_job = BatchJob(
+                job_name=job_name,
+                status="PENDING",
+                artist_ids_json=json.dumps([a["id"] for a in artist_data]),
+            )
+            db.add(batch_job)
+            db.commit()
+            print(f"[Scanner-CLI] BatchJob saved (id={batch_job.id}, job_name={job_name})")
+
+        print(f"[Scanner-CLI] Batch submitted. Use batch_poller.py to poll for results.")
+
+        # Cleanup temp file
+        try:
+            if os.path.exists(json_path):
+                os.remove(json_path)
+        except Exception:
+            pass
+        return
+
+    # ─── Synchronous Mode (opt-in via --sync) ───
+    print(f"[Scanner-CLI] Sync mode (--sync): scanning {len(artist_data)} artists in real-time (max 5 parallel)...")
+
+    limiter = get_rate_limiter()
+    print(f"[Scanner-CLI] Rate limiter mode: {limiter.mode} | Model RPD: {limiter.model_rpd} | Search RPD: {limiter.search_rpd}")
 
     artist_name_map = {a["id"]: a["name"] for a in artist_data}
     
@@ -364,10 +417,22 @@ async def main():
             for artist in artist_data
         ]
         
-        results = await asyncio.gather(*tasks)
-        total_processed = sum(results)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Count successes vs rate-limit stops
+        total_processed = 0
+        rate_limited = False
+        for r in results:
+            if isinstance(r, RuntimeError):
+                rate_limited = True
+            elif isinstance(r, int):
+                total_processed += r
 
-        print(f"\n[Scanner-CLI] Full scan cycle finished successfully. Processed {total_processed} artists.")
+        stats = limiter.stats
+        print(f"\n[Scanner-CLI] Full scan cycle finished. Processed {total_processed} artists.")
+        print(f"[Scanner-CLI] Rate limiter stats: Model {stats['model_rpd_used']}/{stats['model_rpd_limit']} RPD | Search {stats['search_rpd_used']}/{stats['search_rpd_limit']} RPD")
+        if rate_limited:
+            print(f"[Scanner-CLI] ⛔ Some artists were skipped due to rate limits. Re-run tomorrow or switch to unlimited mode.")
             
     except Exception as e:
         print(f"[Scanner-CLI] CLI scan crash: {e}")

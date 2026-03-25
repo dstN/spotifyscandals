@@ -64,6 +64,24 @@ if (typeof window !== 'undefined') {
  */
 import { derived } from 'svelte/store'
 
+/**
+ * Spotify Access Token (for calling Spotify Web API directly, e.g. top artists)
+ * Short-lived (1 hour), stored in sessionStorage
+ */
+const storedSpotifyToken =
+  typeof window !== 'undefined' ? sessionStorage.getItem('spotify_access_token') : null
+export const spotifyAccessToken = writable(storedSpotifyToken)
+
+if (typeof window !== 'undefined') {
+  spotifyAccessToken.subscribe((token) => {
+    if (token) {
+      sessionStorage.setItem('spotify_access_token', token)
+    } else {
+      sessionStorage.removeItem('spotify_access_token')
+    }
+  })
+}
+
 export const spotifyUser = derived(publicToken, ($token) => {
   if (!$token) return null
   try {

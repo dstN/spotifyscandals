@@ -161,7 +161,7 @@
     <div class="glass py-16 text-center">
       <p class="text-lg text-text-secondary">No artists found</p>
       <p class="mt-2 text-sm text-text-tertiary">Submit a Spotify playlist to get started</p>
-      <a href="#/submit" class="btn-spotify mt-4 inline-block no-underline">♫ Submit Playlist</a>
+      <a href="/submit" class="btn-spotify mt-4 inline-block no-underline">♫ Submit Playlist</a>
     </div>
   {:else}
     <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">

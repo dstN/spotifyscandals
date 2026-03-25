@@ -1,9 +1,11 @@
 <script>
   import { onMount } from 'svelte'
-  import { fetchStats } from '../lib/api.js'
+  import { fetchStats, triggerAutoScan } from '../lib/api.js'
+  import { showToast } from '../lib/stores.js'
 
   let stats = $state(null)
   let loading = $state(true)
+  let autoScanning = $state(false)
 
   onMount(async () => {
     try {
@@ -76,11 +78,37 @@
 
 <div class="fade-in space-y-8">
   <!-- Header -->
-  <div>
-    <h1 class="text-3xl font-semibold tracking-tight text-text-primary">Dashboard</h1>
-    <p class="mt-1 text-sm text-text-secondary">
-      Overview of tracked artists and discovered scandals
-    </p>
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-semibold tracking-tight text-text-primary">Dashboard</h1>
+      <p class="mt-1 text-sm text-text-secondary">
+        Overview of tracked artists and discovered scandals
+      </p>
+    </div>
+    <button
+      onclick={async () => {
+        autoScanning = true
+        try {
+          await triggerAutoScan()
+          showToast('success', 'Top 50 auto-scan triggered')
+          stats = await fetchStats()
+        } catch (e) {
+          showToast('error', `Auto-scan failed: ${e.message}`)
+        } finally {
+          autoScanning = false
+        }
+      }}
+      disabled={autoScanning}
+      class="btn-spotify flex items-center gap-2 px-4 py-2 text-sm"
+    >
+      {#if autoScanning}
+        <span class="spinner w-4 h-4 border-black border-t-transparent"></span>
+        Scanning...
+      {:else}
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+        Auto-Scan Top 50
+      {/if}
+    </button>
   </div>
 
   <!-- Stats Grid -->

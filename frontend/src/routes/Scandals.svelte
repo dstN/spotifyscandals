@@ -169,7 +169,7 @@
         <div class="glass group flex gap-4 p-5">
           <!-- Artist Header (Click to navigate to subroute) -->
           <a
-            href="#/admin/scandals/{group.id}"
+            href="/admin/scandals/{group.id}"
             class="flex items-center gap-4 w-full h-full text-left no-underline"
           >
             <!-- Artist Image -->

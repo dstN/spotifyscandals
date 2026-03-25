@@ -153,3 +153,45 @@ class CommunityScandal(Base):
 
     def __repr__(self):
         return f"<CommunityScandal(id={self.id}, artist_id={self.artist_id}, spotify_user_id='{self.spotify_user_id}')>"
+
+
+class CommunitySource(Base):
+    """
+    A source URL submitted by the public community for an existing scandal.
+    Waiting for admin review before being added as a verified ScandalSource.
+    """
+    __tablename__ = "community_sources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scandal_id = Column(
+        Integer, ForeignKey("scandals.id", ondelete="CASCADE"), nullable=False
+    )
+    spotify_user_id = Column(String(255), nullable=False, index=True)
+    source_url = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+    scandal = relationship("Scandal")
+
+    def __repr__(self):
+        return f"<CommunitySource(id={self.id}, scandal_id={self.scandal_id})>"
+
+
+class BatchJob(Base):
+    """
+    Tracks a Gemini Batch API job submitted for background scanning.
+    """
+    __tablename__ = "batch_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_name = Column(String(500), unique=True, nullable=False, index=True)
+    status = Column(String(50), nullable=False, default="PENDING")  # PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED, EXPIRED
+    artist_ids_json = Column(Text, nullable=False)  # JSON array of artist IDs included in this batch
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    completed_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<BatchJob(id={self.id}, job_name='{self.job_name}', status='{self.status}')>"

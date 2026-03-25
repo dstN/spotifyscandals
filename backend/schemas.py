@@ -17,11 +17,24 @@ class PlaylistSubmit(BaseModel):
     playlist_url: str
 
 
+class PlaylistArtist(BaseModel):
+    """Lightweight artist info returned after playlist extraction."""
+    id: int
+    name: str
+    spotify_id: str
+    image_url: Optional[str] = None
+    scandal_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
 class PlaylistSubmitResponse(BaseModel):
     """Response after extracting artists from a playlist."""
     playlist_name: str
     artists_added: int
     artists_skipped: int  # Already existed in DB
+    artists: list[PlaylistArtist] = []
 
 
 # ═══════════════════════════════════════════
@@ -111,7 +124,44 @@ class CommunityScandalResponse(BaseModel):
 
 class VoteRequest(BaseModel):
     """Request body for submitting a vote on a scandal."""
-    vote: int  # 1 to 10
+    vote: int  # 0 to 10
+
+
+class AdminSourceCreate(BaseModel):
+    """Request body for admin directly adding a source to a scandal."""
+    source_url: str
+
+
+class CommunitySourceSubmit(BaseModel):
+    """Request body for a public user submitting a source for an existing scandal."""
+    source_url: str
+
+
+class ExistingSourceBrief(BaseModel):
+    """Brief source info for showing existing sources alongside a pending community source."""
+    id: int
+    source_url: str
+    source_title: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CommunitySourceResponse(BaseModel):
+    """Community submitted source waiting for review."""
+    id: int
+    scandal_id: int
+    spotify_user_id: str
+    source_url: str
+    created_at: datetime
+    scandal_title: Optional[str] = None
+    scandal_description: Optional[str] = None
+    artist_name: Optional[str] = None
+    artist_image_url: Optional[str] = None
+    existing_sources: list[ExistingSourceBrief] = []
+
+    class Config:
+        from_attributes = True
 
 
 class ScanScandalRequest(BaseModel):

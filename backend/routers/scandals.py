@@ -6,13 +6,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, R
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from database import get_db
-from models import Artist, Scandal, ScandalSource, ScandalVote
+from models import Artist, Scandal, ScandalSource, ScandalVote, CommunitySource
 from schemas import (
     ScandalResponse,
     ScanScandalRequest,
     ScanScandalResponse,
     DashboardStats,
     VoteRequest,
+    AdminSourceCreate,
+    CommunitySourceSubmit,
+    CommunitySourceResponse,
 )
 from services.gemini import scan_artists_for_scandals
 from auth_deps import require_admin, get_current_public_user, get_optional_public_user
@@ -112,8 +115,8 @@ def submit_scandal_vote(
     if not scandal:
         raise HTTPException(status_code=404, detail="Scandal not found")
         
-    if not (1 <= body.vote <= 10):
-        raise HTTPException(status_code=400, detail="Vote must be between 1 and 10")
+    if not (0 <= body.vote <= 10):
+        raise HTTPException(status_code=400, detail="Vote must be between 0 and 10")
         
     vote_record = db.query(ScandalVote).filter(
         ScandalVote.scandal_id == scandal_id,
@@ -331,3 +334,48 @@ def report_scandal_source(
     source.is_reported = True
     db.commit()
     return {"message": "Source reported successfully", "is_reported": True}
+
+
+@router.post("/{scandal_id}/sources")
+def admin_add_source(
+    scandal_id: int,
+    body: AdminSourceCreate,
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    """Admin directly adds a verified source to an existing scandal."""
+    scandal = db.query(Scandal).filter(Scandal.id == scandal_id).first()
+    if not scandal:
+        raise HTTPException(status_code=404, detail="Scandal not found")
+
+    source = ScandalSource(
+        scandal_id=scandal_id,
+        source_url=body.source_url.strip(),
+        is_verified=True,
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    return {"id": source.id, "source_url": source.source_url, "is_verified": source.is_verified}
+
+
+@router.post("/{scandal_id}/community-sources")
+def submit_community_source(
+    scandal_id: int,
+    body: CommunitySourceSubmit,
+    db: Session = Depends(get_db),
+    spotify_id: str = Depends(get_current_public_user),
+):
+    """Public user submits a source URL for an existing scandal (pending admin review)."""
+    scandal = db.query(Scandal).filter(Scandal.id == scandal_id).first()
+    if not scandal:
+        raise HTTPException(status_code=404, detail="Scandal not found")
+
+    community_source = CommunitySource(
+        scandal_id=scandal_id,
+        spotify_user_id=spotify_id,
+        source_url=body.source_url.strip(),
+    )
+    db.add(community_source)
+    db.commit()
+    return {"message": "Source submitted for review"}

@@ -49,7 +49,7 @@ def list_artists(
         safety_score = None
         if total_votes > 0:
             avg_vote = sum_votes / total_votes
-            safety_score = ((10 - avg_vote) / 9) * 100
+            safety_score = ((10 - avg_vote) / 10) * 100
 
         result.append(ArtistResponse(
             id=artist.id,
@@ -123,7 +123,7 @@ def get_artist(request: Request, artist_id: int, db: Session = Depends(get_db)):
     safety_score = None
     if total_votes > 0:
         avg_vote = sum_votes / total_votes
-        safety_score = ((10 - avg_vote) / 9) * 100
+        safety_score = ((10 - avg_vote) / 10) * 100
 
     # Fetch community scandals
     comm_scandals = db.query(CommunityScandal).filter(CommunityScandal.artist_id == artist_id).order_by(CommunityScandal.created_at.desc()).all()

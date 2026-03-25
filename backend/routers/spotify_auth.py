@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/public/auth/spotify", tags=["Spotify Auth"])
 def login_with_spotify():
     """Redirect user to Spotify for OAuth login."""
     settings = get_settings()
-    scope = "user-read-private user-read-email"
+    scope = "user-read-private user-read-email user-top-read"
     query_params = {
         "client_id": settings.spotify_client_id,
         "response_type": "code",
@@ -29,10 +29,10 @@ async def spotify_callback(code: str = None, error: str = None):
     settings = get_settings()
     
     if error:
-        return RedirectResponse(f"{settings.frontend_url}/#/auth/error?message={error}")
+        return RedirectResponse(f"{settings.frontend_url}/auth/error?message={error}")
     
     if not code:
-        return RedirectResponse(f"{settings.frontend_url}/#/auth/error?message=Missing_code")
+        return RedirectResponse(f"{settings.frontend_url}/auth/error?message=Missing_code")
         
     # Exchange code for token
     token_url = "https://accounts.spotify.com/api/token"
@@ -48,7 +48,7 @@ async def spotify_callback(code: str = None, error: str = None):
         # Request access token
         token_resp = await client.post(token_url, data=auth_data)
         if token_resp.status_code != 200:
-            return RedirectResponse(f"{settings.frontend_url}/#/auth/error?message=Token_exchange_failed")
+            return RedirectResponse(f"{settings.frontend_url}/auth/error?message=Token_exchange_failed")
             
         token_info = token_resp.json()
         access_token = token_info.get("access_token")
@@ -59,7 +59,7 @@ async def spotify_callback(code: str = None, error: str = None):
             headers={"Authorization": f"Bearer {access_token}"}
         )
         if user_resp.status_code != 200:
-            return RedirectResponse(f"{settings.frontend_url}/#/auth/error?message=Profile_fetch_failed")
+            return RedirectResponse(f"{settings.frontend_url}/auth/error?message=Profile_fetch_failed")
             
         user_data = user_resp.json()
         spotify_id = user_data.get("id")
@@ -80,5 +80,5 @@ async def spotify_callback(code: str = None, error: str = None):
     }
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
     
-    # Redirect back to frontend
-    return RedirectResponse(f"{settings.frontend_url}/#/auth/callback?token={encoded_jwt}")
+    # Redirect back to frontend with both internal JWT and Spotify access token
+    return RedirectResponse(f"{settings.frontend_url}/auth/callback?token={encoded_jwt}&spotify_token={access_token}")

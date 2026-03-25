@@ -16,7 +16,7 @@
       showToast('success', 'Logged in successfully')
       
       // Force a hard reload to /admin to ensure state propagates cleanly
-      window.location.hash = '#/admin'
+      history.pushState({}, '', '/admin'); window.dispatchEvent(new PopStateEvent('popstate'))
     } catch (err) {
       showToast('error', err.message || 'Invalid credentials')
     } finally {
@@ -75,7 +75,7 @@
     </form>
     
     <div class="mt-8 text-center">
-      <a href="#/" class="text-sm font-medium text-text-tertiary transition-colors hover:text-text-primary">
+      <a href="/" class="text-sm font-medium text-text-tertiary transition-colors hover:text-text-primary">
         &larr; Back to Public View
       </a>
     </div>
