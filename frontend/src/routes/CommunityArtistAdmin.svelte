@@ -99,6 +99,16 @@
       hour: '2-digit', minute: '2-digit'
     })
   }
+
+  function formatSourceLabel(url) {
+    if (!url) return ''
+    try {
+      const parsed = new URL(url)
+      return parsed.hostname.replace('www.', '')
+    } catch {
+      return url
+    }
+  }
 </script>
 
 <div class="fade-in space-y-6">
@@ -171,7 +181,7 @@
                     <div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 group/source">
                       <a href={url.trim()} target="_blank" rel="noopener noreferrer" class="group/link flex flex-1 w-full items-center gap-2 rounded-xl border border-glass-border px-4 py-2.5 text-sm text-text-secondary no-underline transition-all hover:border-glass-border-hover hover:bg-glass hover:text-text-primary overflow-hidden">
                         <span class="text-text-tertiary transition-colors group-hover/link:text-text-secondary flex-shrink-0">↗</span>
-                        <span class="truncate">{url.trim()}</span>
+                        <span class="truncate">{formatSourceLabel(url.trim())}</span>
                       </a>
                     </div>
                   {/if}

@@ -7,6 +7,7 @@ Uses the new google-genai client to:
   3. Return parsed JSON with scandal titles, descriptions, and source URLs
 """
 
+
 import json
 import asyncio
 import subprocess
@@ -22,6 +23,24 @@ from datetime import datetime, timezone
 from playwright.async_api import async_playwright
 
 
+# ─── Source Blocklist ───
+# YouTube and Reddit are not acceptable journalistic sources.
+BLOCKED_SOURCE_DOMAINS = {
+    "youtube.com", "youtu.be",
+    "reddit.com", "redd.it",
+}
+
+def is_blocked_domain(url: str) -> bool:
+    """Returns True if the URL belongs to a blocked platform."""
+    try:
+        hostname = urlparse(url).hostname or ""
+        hostname = hostname.lower().removeprefix("www.")
+        return any(hostname == blocked or hostname.endswith("." + blocked) for blocked in BLOCKED_SOURCE_DOMAINS)
+    except Exception:
+        return False
+
+
+
 async def _resolve_url_ultra(uri: str, fallback_title: str | None) -> dict:
     """
     Final fallback: Use headless chrome to follow redirects. 
@@ -30,7 +49,10 @@ async def _resolve_url_ultra(uri: str, fallback_title: str | None) -> dict:
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
             # Wait for navigation to complete
             await page.goto(uri, wait_until="networkidle", timeout=15000)
             final_url = page.url
@@ -57,7 +79,7 @@ async def _resolve_url_deep(uri: str, fallback_title: str | None) -> dict:
         # --max-time 10
         devnull = "NUL" if os.name == "nt" else "/dev/null"
         process = await asyncio.create_subprocess_exec(
-            "curl", "-Ls", "-o", devnull, "-w", "%{url_effective}", uri,
+            "curl", "-Ls", "-o", devnull, "-w", "%{url_effective}", "--max-time", "10", uri,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -222,21 +244,21 @@ def _build_prompt(artist_name: str, spotify_id: str, current_date: str, existing
         exclusion_text = "\n\nExclude the following scandals from the JSON output because they are already known/recorded in the database:\n"
         exclusion_text += json.dumps(existing_scandals, indent=2)
 
-    return f"""You are an investigative research assistant. Your task is to find **all scandals** involving the artist "{artist_name}" (Musician/Artist) up to the date "{current_date}". If available, you can also reference the artist's Spotify page: {spotify_url}.
+    return f"""You are an investigative research assistant. Your task is to find **all scandals and controversies** involving the artist "{artist_name}" (Musician/Artist) up to the date "{current_date}". If available, you can also reference the artist's Spotify page: {spotify_url}.
 
 Instructions:
-1. Collect **all known scandals** involving the artist until the given date. Use the Google Search tool to verify information.
-2. **STRICT IDENTITY VERIFICATION**: Do NOT include any information, scandals, or sources for people with similar names who are not the specific artist "{artist_name}". For example, if searching for a musician, do not return results for actors, politicians, or other public figures with similar names.
-3. For each scandal, provide:
-   - A concise **title** (short, descriptive name of the scandal)
-   - A brief **description** (1-2 sentences summarizing the scandal)
-4. Output the results strictly as **valid JSON** using the following structure:
+1. Collect **all known scandals and controversies** involving the artist until the given date. Use the Google Search tool to verify information. (Note: Wikipedia and other neutral sources often use the term "controversies").
+2. **STRICT IDENTITY VERIFICATION**: Do NOT include any information, controversies, or sources for people with similar names who are not the specific artist "{artist_name}". For example, if searching for a musician, do not return results for actors, politicians, or other public figures with similar names.
+3. For each scandal/controversy, provide:
+   - A concise **title** (short, descriptive name of the event)
+   - A brief **description** (1-2 sentences summarizing the event)
+4. Output the results strictly as **valid JSON** using the following structure (keep the key as "scandals" for compatibility):
 
 {{
   "scandals": [
     {{
-      "title": "Title of scandal 1",
-      "description": "Short description of scandal 1"
+      "title": "Title of scandal/controversy 1",
+      "description": "Short description of the event"
     }}
   ]
 }}
@@ -362,8 +384,11 @@ async def scan_artist_for_scandals(artist: dict) -> dict:
                         except Exception as e:
                             print(f"[Gemini-Filter] Exception resolving vertexaisearch source for {artist['name']}, skipping: {e}")
                     else:
-                        # Keep normal URLs
-                        grounding_sources.append(item)
+                        # Keep normal URLs — but filter blocked domains
+                        if is_blocked_domain(item.get("url", "")):
+                            print(f"[Gemini-Filter] Blocked domain skipped for {artist['name']}: {item.get('url', '')[:60]}")
+                        else:
+                            grounding_sources.append(item)
                         
         except Exception as e:
             print(f"[Gemini] Grounding chunks processing failed for {artist['name']}: {e}")
@@ -470,6 +495,11 @@ async def verify_source_relevance(source_url: str, title: str, description: str)
     """
     if not source_url or not source_url.startswith("http"):
         return False
+
+    # Fast-reject blocked platforms before any network call
+    if is_blocked_domain(source_url):
+        print(f"[Gemini-Verify] Blocked domain – rejected: {source_url[:60]}")
+        return False
         
     print(f"\n[Gemini-Verify] Verifying relevance of: {source_url[:60]}...")
     
@@ -493,7 +523,10 @@ async def verify_source_relevance(source_url: str, title: str, description: str)
             # Fallback to Playwright for JS-heavy sites or strict anti-bot
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+                )
+                page = await context.new_page()
                 await page.goto(source_url, wait_until="domcontentloaded", timeout=15000)
                 html_content = await page.content()
                 await browser.close()
@@ -573,10 +606,160 @@ async def verify_source_relevance(source_url: str, title: str, description: str)
         # If verification mechanism fails (API error), default to keeping it (True) to prevent accidental data loss
         return True
 
+
+async def score_source_relevance(source_url: str, scandal_title: str, scandal_description: str) -> int:
+    """
+    Scores the relevance of a source URL to a given scandal on a 0-10 scale.
+
+    Primary:  Gemini url_context (Gemini fetches the URL itself)
+    Fallback: httpx → Playwright (manual fetch + BeautifulSoup extraction)
+
+    Returns an integer score (0-10). Returns 0 on error or blocked domain.
+    A score > 7 (i.e. 8, 9, 10) is considered accepted.
+    """
+    if not source_url or not source_url.startswith("http"):
+        return 0
+
+    if is_blocked_domain(source_url):
+        print(f"[Gemini-Score] Blocked domain – score 0: {source_url[:60]}")
+        return 0
+
+    print(f"[Gemini-Score] Scoring: {source_url[:60]}...")
+
+    SCORE_PROMPT = f"""You are a strict relevance evaluator. Read the content at the given URL and rate how relevant it is to the described scandal/controversy on a scale from 0 to 10.
+
+0 = completely unrelated to this specific event.
+10 = directly and explicitly about this exact event.
+
+Scandal Title: {scandal_title}
+Scandal Description: {scandal_description}
+
+URL to evaluate: {source_url}
+
+Rules:
+- Score 0 if the article does not mention this event at all.
+- Score 5-7 if it loosely covers the topic or mentions the artist but not this specific event.
+- Score 8-10 if it explicitly discusses this event, controversy, or the specific works/statements involved.
+- Respond with ONLY a single integer between 0 and 10. No explanation."""
+
+    settings = get_settings()
+    client = genai.Client(api_key=settings.gemini_api_key)
+
+    # ── Primary: Gemini url_context (Gemini fetches the URL itself) ──
+    try:
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model="gemini-3-flash-preview",
+            contents=SCORE_PROMPT,
+            config=types.GenerateContentConfig(
+                tools=[{"url_context": {}}],
+                # NOTE: no max_output_tokens — url_context adds its own context tokens
+            )
+        )
+        # url_context returns content in parts, not response.text
+        raw = ""
+        if response.text:
+            raw = response.text.strip()
+        elif response.candidates:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "text") and part.text:
+                    raw += part.text
+            raw = raw.strip()
+        match = re.search(r'\d+', raw)
+        if match:
+            score = max(0, min(10, int(match.group())))
+            print(f"[Gemini-Score] url_context score {score}/10 for: {source_url[:60]}")
+            return score
+        print(f"[Gemini-Score] url_context returned no score (raw='{raw[:80]}'), falling back...")
+    except Exception as e:
+        print(f"[Gemini-Score] url_context failed ({e}), falling back to manual fetch...")
+
+    # ── Fallback: manual fetch → BeautifulSoup → Gemini text prompt ──
+    html_content = ""
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as http:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+            }
+            resp = await http.get(source_url, headers=headers)
+            resp.raise_for_status()
+            html_content = resp.text
+    except Exception as e:
+        print(f"[Gemini-Score] httpx failed ({e}), trying Playwright...")
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+                )
+                page = await context.new_page()
+                await page.goto(source_url, wait_until="domcontentloaded", timeout=15000)
+                html_content = await page.content()
+                await browser.close()
+        except Exception as p_err:
+            print(f"[Gemini-Score] Playwright also failed: {p_err}. Scoring as 0.")
+            return 0
+
+    if not html_content:
+        return 0
+
+    try:
+        soup = BeautifulSoup(html_content, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        text_content = soup.get_text(separator=" ", strip=True)[:15000]
+    except Exception:
+        text_content = re.sub("<[^<]+?>", " ", html_content)[:15000]
+
+    if len(text_content) < 100:
+        print(f"[Gemini-Score] Page content too short. Scoring as 0.")
+        return 0
+
+    text_prompt = f"""You are a relevance evaluator. Rate how relevant the following article text is to the described scandal/controversy on a scale from 0 to 10.
+
+0 = completely unrelated. 10 = directly and explicitly about this exact event.
+
+Scandal Title: {scandal_title}
+Scandal Description: {scandal_description}
+
+Article Text (may be in any language):
+---
+{text_content}
+---
+
+Scoring guide:
+- 0-3: Article does not mention the artist or this event at all.
+- 4-6: Article mentions the artist or loosely related topic but not this specific event.
+- 7-8: Article covers this specific event, controversy, or the people/works involved, even if briefly.
+- 9-10: Article is directly and primarily about this exact event.
+- Respond with ONLY a single integer between 0 and 10. No explanation."""
+
+    try:
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model="gemini-3-flash-preview",
+            contents=text_prompt,
+            config=types.GenerateContentConfig(max_output_tokens=5)
+        )
+        raw = response.text.strip()
+        match = re.search(r'\d+', raw)
+        score = int(match.group()) if match else 0
+        score = max(0, min(10, score))
+        print(f"[Gemini-Score] Fallback score {score}/10 for: {source_url[:60]}")
+        return score
+    except Exception as e:
+        print(f"[Gemini-Score] Fallback scoring failed: {e}")
+        return 0
+
+
+
+
 async def find_better_sources(artist_name: str, scandal_title: str, scandal_description: str) -> list[dict]:
     """
     Uses Google Grounding to search for NEW, reliable sources for a specific scandal described by the input.
-    Returns a list of dictionaries with 'url' and 'title'.
+    Returns a list of dictionaries with 'url' and 'title'. Pre-filtered by domain blocklist.
     """
     print(f"\n[Gemini-Heal] Hunting for better sources for: {scandal_title}")
     
@@ -642,6 +825,9 @@ async def find_better_sources(artist_name: str, scandal_title: str, scandal_desc
                                 
         results = []
         for url, site_title in grounding_urls.items():
+            if is_blocked_domain(url):
+                print(f"[Gemini-Heal] Blocked domain filtered: {url[:60]}")
+                continue
             results.append({"url": url, "title": site_title})
             
         print(f"[Gemini-Heal] Found {len(results)} new potential sources.")

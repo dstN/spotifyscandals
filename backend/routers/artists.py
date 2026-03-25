@@ -37,7 +37,7 @@ def list_artists(
     # Build response with scandal counts and safety scores
     result = []
     for artist in artists:
-        scandal_count = len(artist.scandals)
+        scandal_count = sum(1 for s in artist.scandals if s.verified)
         
         # Calculate safety percentage logic
         total_votes = 0
@@ -82,7 +82,7 @@ def get_artist(request: Request, artist_id: int, db: Session = Depends(get_db)):
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    scandal_count = len(artist.scandals)
+    scandal_count = sum(1 for s in artist.scandals if s.verified)
     
     # Calculate safety percentage logic
     total_votes = 0

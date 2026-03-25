@@ -65,16 +65,16 @@ spotifyscandals/
 ## Database Schema
 
 ```
-┌─────────────────────┐     ┌─────────────────────────┐     ┌──────────────────────────┐
-│      artists        │     │        scandals          │     │    scandal_sources       │
-├─────────────────────┤     ├─────────────────────────┤     ├──────────────────────────┤
+┌──────────────────────┐     ┌─────────────────────────┐     ┌──────────────────────────┐
+│      artists         │     │        scandals         │     │    scandal_sources       │
+├──────────────────────┤     ├─────────────────────────┤     ├──────────────────────────┤
 │ id         INTEGER PK│────▸│ id          INTEGER PK  │────▸│ id           INTEGER PK  │
 │ name       TEXT      │     │ artist_id   INTEGER FK  │     │ scandal_id   INTEGER FK  │
 │ spotify_id TEXT UNQ  │     │ description TEXT        │     │ source_url   TEXT        │
-│ image_url  TEXT      │     │ date_detected DATETIME  │     │ created_at   DATETIME   │
+│ image_url  TEXT      │     │ date_detected DATETIME  │     │ created_at   DATETIME    │
 │ approved   BOOLEAN   │     │ verified    BOOLEAN     │     └──────────────────────────┘
 │ created_at DATETIME  │     │ created_at  DATETIME    │
-└─────────────────────┘     └─────────────────────────┘
+└──────────────────────┘     └─────────────────────────┘
 ```
 
 ---

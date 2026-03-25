@@ -2,6 +2,8 @@
 description: Start the backend and frontend dev servers in separate shell windows
 ---
 
+# Start Dev Servers
+
 Start both dev servers in separate Git Bash windows.
 
 // turbo
@@ -20,5 +22,5 @@ start bash start_frontend.sh
 
 Both servers are now running in separate windows:
 
-- Backend: http://localhost:8001
-- Frontend: http://localhost:5173
+- Backend: <http://localhost:8001>
+- Frontend: <http://localhost:5173>

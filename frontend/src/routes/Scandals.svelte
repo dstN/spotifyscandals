@@ -7,11 +7,22 @@
   let loading = $state(true)
   let filterVerified = $state(null) // null = all, true = verified, false = unverified
   let filterReported = $state(null) // null = all, true = reported
+  let searchQuery = $state('')
+
+  let filteredScandals = $derived.by(() => {
+    if (!searchQuery.trim()) return scandals;
+    const q = searchQuery.toLowerCase();
+    return scandals.filter(s => 
+      (s.artist_name && s.artist_name.toLowerCase().includes(q)) ||
+      (s.title && s.title.toLowerCase().includes(q)) ||
+      (s.description && s.description.toLowerCase().includes(q))
+    )
+  })
 
   // Group scandals by artist
   let groupedScandals = $derived.by(() => {
     const groups = {}
-    for (const scandal of scandals) {
+    for (const scandal of filteredScandals) {
       if (!groups[scandal.artist_id]) {
         groups[scandal.artist_id] = {
           id: scandal.artist_id,
@@ -93,36 +104,51 @@
     </p>
   </div>
 
-  <!-- Filters -->
-  <div class="flex gap-1 rounded-xl border border-glass-border p-1 w-fit">
-    <button
-      class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
-        {filterVerified === null ? 'bg-glass text-text-primary' : 'text-text-secondary hover:text-text-primary'}"
-      onclick={() => applyFilter(null)}
-    >
-      All
-    </button>
-    <button
-      class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
-        {filterVerified === false ? 'bg-warning-glow text-warning' : 'text-text-secondary hover:text-text-primary'}"
-      onclick={() => applyFilter(false)}
-    >
-      Unverified
-    </button>
-    <button
-      class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
-        {filterVerified === true ? 'bg-success-glow text-success' : 'text-text-secondary hover:text-text-primary'}"
-      onclick={() => applyFilter(true)}
-    >
-      Verified
-    </button>
-    <button
-      class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
-        {filterReported === true ? 'bg-danger-glow text-danger' : 'text-text-secondary hover:text-text-primary'}"
-      onclick={() => applyReportedFilter(true)}
-    >
-      Reported
-    </button>
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <!-- Filters -->
+    <div class="flex flex-wrap gap-1 rounded-xl border border-glass-border p-1 w-fit shrink-0">
+      <button
+        class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
+          {filterVerified === null ? 'bg-glass text-text-primary' : 'text-text-secondary hover:text-text-primary'}"
+        onclick={() => applyFilter(null)}
+      >
+        All
+      </button>
+      <button
+        class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
+          {filterVerified === false ? 'bg-warning-glow text-warning' : 'text-text-secondary hover:text-text-primary'}"
+        onclick={() => applyFilter(false)}
+      >
+        Unverified
+      </button>
+      <button
+        class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
+          {filterVerified === true ? 'bg-success-glow text-success' : 'text-text-secondary hover:text-text-primary'}"
+        onclick={() => applyFilter(true)}
+      >
+        Verified
+      </button>
+      <button
+        class="rounded-lg px-3 py-1.5 text-xs font-medium transition-all
+          {filterReported === true ? 'bg-danger-glow text-danger' : 'text-text-secondary hover:text-text-primary'}"
+        onclick={() => applyReportedFilter(true)}
+      >
+        Reported
+      </button>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="relative w-full sm:w-64 shrink-0">
+      <input
+        type="text"
+        placeholder="Search scandals..."
+        bind:value={searchQuery}
+        class="input-glass w-full !pl-10 !py-2 text-sm"
+      />
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      </svg>
+    </div>
   </div>
 
   <!-- Artist Grouped List -->

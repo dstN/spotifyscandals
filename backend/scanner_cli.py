@@ -9,8 +9,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database import SessionLocal
 from models import Artist, Scandal, ScandalSource
-from services.gemini import scan_artists_for_scandals, _resolve_url_deep, verify_source_relevance, find_better_sources
+from services.gemini import scan_artists_for_scandals, _resolve_url_deep, verify_source_relevance, find_better_sources, score_source_relevance, is_blocked_domain
 import logging
+
+# Global lock — ensures only one artist writes to SQLite at a time.
+# Scanning, scoring, and content-fetching still happens fully in parallel.
+_db_write_lock = asyncio.Lock()
 
 class LoggerWriter:
     def __init__(self, log_file_path, original_stream):
@@ -52,11 +56,14 @@ async def cleanup_redirects(db):
 
 async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_map: dict):
     """
-    Loop through newly found scandals, verify their sources, delete irrelevant ones,
-    and attempt to 'heal' scandals that run out of sources.
+    Loop through newly found scandals, pre-score and verify their sources,
+    and attempt to 'heal' scandals that run out of verified sources.
     """
     if not new_scandal_ids:
         return
+
+    MAX_SOURCES = 5
+    MIN_SCORE = 8  # Pre-filter threshold (0-10 scale)
 
     print(f"\n[Scanner-CLI] Starting Source Verification for {len(new_scandal_ids)} new scandal(s)...")
     
@@ -67,18 +74,35 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
         print(f"\n[Scanner-CLI] --- Verifying Scandal: {scandal.title} ({artist_name}) ---")
         
         sources = db.query(ScandalSource).filter(ScandalSource.scandal_id == scandal.id).all()
-        valid_sources_count = len(sources)
         
-        # 1. Verify existing sources
+        # 1. Pre-score + Verify existing sources (cap at MAX_SOURCES verified)
         verified_count = 0
         for src in sources:
-            is_valid = await verify_source_relevance(src.source_url, scandal.title, scandal.description)
-            src.is_verified = is_valid
-            if not is_valid:
-                print(f"[Scanner-CLI] ❌ Source irrelevant (Unverified): {src.source_url[:60]}...")
+            # Blocked domain fast-reject
+            if is_blocked_domain(src.source_url):
+                print(f"[Scanner-CLI] 🚫 Blocked domain, skipping: {src.source_url[:60]}")
+                src.is_verified = False
+                continue
+
+            # Pre-score to avoid expensive content fetch
+            if verified_count < MAX_SOURCES:
+                score = await score_source_relevance(src.source_url, scandal.title, scandal.description)
+                if score < MIN_SCORE:
+                    print(f"[Scanner-CLI] ⬇️ Score {score}/10 too low, skipping deep verify: {src.source_url[:60]}")
+                    src.is_verified = False
+                    continue
+
+                is_valid = await verify_source_relevance(src.source_url, scandal.title, scandal.description)
+                src.is_verified = is_valid
+                if is_valid:
+                    print(f"[Scanner-CLI] ✅ Source verified: {src.source_url[:60]}")
+                    verified_count += 1
+                else:
+                    print(f"[Scanner-CLI] ❌ Source irrelevant: {src.source_url[:60]}")
             else:
-                print(f"[Scanner-CLI] ✅ Source verified: {src.source_url[:60]}...")
-                verified_count += 1
+                # Already have enough verified sources — mark the rest unverified
+                src.is_verified = False
+                print(f"[Scanner-CLI] 🔢 Source cap reached ({MAX_SOURCES}), skipping: {src.source_url[:60]}")
                 
         db.commit()
         
@@ -89,12 +113,22 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
             
             healed = False
             for src_data in new_sources_data:
+                if verified_count >= MAX_SOURCES:
+                    break
+
                 url = src_data.get("url")
                 title = src_data.get("title")
-                if not url:
-                     continue
-                     
-                print(f"[Scanner-CLI] Checking new candidate source: {url[:60]}...")
+                if not url or is_blocked_domain(url):
+                    continue
+                    
+                print(f"[Scanner-CLI] Checking heal candidate: {url[:60]}...")
+                
+                # Pre-score the heal candidate too
+                score = await score_source_relevance(url, scandal.title, scandal.description)
+                if score < MIN_SCORE:
+                    print(f"[Scanner-CLI] ⬇️ Heal candidate score too low ({score}/10), skipping.")
+                    continue
+                
                 is_valid = await verify_source_relevance(url, scandal.title, scandal.description)
                 
                 if is_valid:
@@ -109,14 +143,7 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
                     healed = True
                     verified_count += 1
                 else:
-                    print(f"[Scanner-CLI] ➖ Healing found irrelevant source. Adding as unverified.")
-                    new_src = ScandalSource(
-                        scandal_id=scandal.id,
-                        source_url=url,
-                        source_title=title,
-                        is_verified=False
-                    )
-                    db.add(new_src)
+                    print(f"[Scanner-CLI] ➖ Heal candidate failed deep verify. Skipping.")
             
             db.commit()
             
@@ -126,13 +153,175 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
             else:
                 print(f"[Scanner-CLI] 🏥 Scandal recovered with {verified_count} verified sources.")
         else:
-             print(f"[Scanner-CLI] Verified. {verified_count} source(s) verified.")
+             print(f"[Scanner-CLI] ✓ Verified. {verified_count}/{MAX_SOURCES} max source(s).")
 
         # Update the scandal verification status
         scandal.verified = (verified_count > 0)
         db.commit()
 
     print(f"\n[Scanner-CLI] Source Verification Complete.")
+
+async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio.Semaphore) -> int:
+    """Process a single artist: scan for scandals, verify sources inline, then save to DB."""
+    MAX_SOURCES = 5
+    MIN_SCORE = 7  # Sources must score > 7 (i.e. 8, 9, or 10) to be accepted
+
+    async with semaphore:
+        print(f"\n[Scanner-CLI] === Processing Artist: {artist['name']} ===")
+        try:
+            # 0. Fetch existing scandal titles so Gemini won't re-generate them
+            try:
+                with SessionLocal() as db:
+                    existing_rows = (
+                        db.query(Scandal.title, Scandal.description)
+                        .filter(Scandal.artist_id == artist["id"])
+                        .all()
+                    )
+                    artist["existing_scandals"] = [
+                        {"title": r.title, "description": r.description}
+                        for r in existing_rows
+                    ]
+                    if artist["existing_scandals"]:
+                        print(f"[Scanner-CLI] ℹ️ {len(artist['existing_scandals'])} existing scandal(s) will be excluded from scan.")
+            except Exception as e:
+                print(f"[Scanner-CLI] Could not fetch existing scandals: {e}")
+                artist["existing_scandals"] = []
+
+            # 1. Scan this single artist via Gemini
+            results = await scan_artists_for_scandals([artist])
+            if not results:
+                return 0
+            
+            artist_result = results[0]
+            artist_id = artist_result.get("artist_id")
+
+            # ─── Phase 1: All expensive work (no DB open) ───
+            # Score sources, run healing — DB is NOT open during this.
+            # This can run fully in parallel across multiple artists.
+            scandals_to_save = []
+
+            for scandal_data in artist_result.get("scandals", []):
+                if not isinstance(scandal_data, dict):
+                    continue
+
+                raw_description = scandal_data.get("description")
+                description = str(raw_description).strip() if raw_description is not None else ""
+                if not description:
+                    continue
+
+                raw_title = scandal_data.get("title")
+                title = str(raw_title).strip() if raw_title is not None else ""
+
+                accepted_sources = []
+                raw_sources = scandal_data.get("sources", [])
+
+                for source_item in raw_sources:
+                    if len(accepted_sources) >= MAX_SOURCES:
+                        break
+                    if source_item is None:
+                        continue
+
+                    if isinstance(source_item, dict):
+                        raw_url = source_item.get("url")
+                        url = str(raw_url).strip() if raw_url is not None else ""
+                        src_title = source_item.get("title")
+                    else:
+                        url = str(source_item).strip()
+                        src_title = None
+
+                    if not url or is_blocked_domain(url):
+                        continue
+
+                    score = await score_source_relevance(url, title, description)
+                    if score <= MIN_SCORE:
+                        print(f"[Scanner-CLI] ⬇️ Score {score}/10 too low (need >{MIN_SCORE}), skipping: {url[:60]}")
+                        continue
+
+                    print(f"[Scanner-CLI] ✅ Source accepted (score {score}/10): {url[:60]}")
+                    accepted_sources.append({"url": url, "title": src_title})
+
+                # Healing loop if nothing passed
+                if not accepted_sources:
+                    print(f"[Scanner-CLI] ⚠️ No sources passed gates for '{title}'. Starting healing loop...")
+                    heal_sources = await find_better_sources(artist["name"], title, description)
+
+                    for src_data in heal_sources:
+                        if len(accepted_sources) >= MAX_SOURCES:
+                            break
+                        url = src_data.get("url", "")
+                        src_title = src_data.get("title")
+                        if not url or is_blocked_domain(url):
+                            continue
+
+                        score = await score_source_relevance(url, title, description)
+                        if score <= MIN_SCORE:
+                            print(f"[Scanner-CLI] ⬇️ Heal candidate score too low ({score}/10), skipping.")
+                            continue
+
+                        print(f"[Scanner-CLI] 💉 Healing: accepted source (score {score}/10): {url[:60]}")
+                        accepted_sources.append({"url": url, "title": src_title})
+
+                    if not accepted_sources:
+                        print(f"[Scanner-CLI] ⚠️ Healing failed. Scandal '{title}' has no verified sources.")
+
+                scandals_to_save.append({
+                    "title": title,
+                    "description": description,
+                    "verified": len(accepted_sources) > 0,
+                    "sources": accepted_sources,
+                })
+
+            # ─── Phase 2: Write to DB (serialized via lock) ───
+            # DB is open for milliseconds — just writes, no I/O or API calls.
+            async with _db_write_lock:
+                db = SessionLocal()
+                try:
+                    db_artist = db.query(Artist).filter(Artist.id == artist_id).first()
+                    if db_artist:
+                        db_artist.last_scanned_at = datetime.now(timezone.utc)
+
+                    for s in scandals_to_save:
+                        existing = (
+                            db.query(Scandal)
+                            .filter(Scandal.artist_id == artist_id, Scandal.description == s["description"])
+                            .first()
+                        )
+                        if existing:
+                            continue
+
+                        scandal = Scandal(
+                            artist_id=artist_id,
+                            title=s["title"],
+                            description=s["description"],
+                            verified=s["verified"],
+                        )
+                        db.add(scandal)
+                        db.flush()
+
+                        for src in s["sources"]:
+                            db.add(ScandalSource(
+                                scandal_id=scandal.id,
+                                source_url=src["url"],
+                                source_title=src["title"],
+                                is_verified=True,
+                            ))
+                        print(f"[Scanner-CLI] Scandal '{s['title']}': {len(s['sources'])} verified source(s) written.")
+
+                    db.commit()
+                    print(f"[Scanner-CLI] ✓ All data saved for {artist['name']}.")
+                    return 1
+
+                except Exception as e:
+                    db.rollback()
+                    print(f"[Scanner-CLI] Database update failed for {artist['name']}: {e}")
+                    return 0
+                finally:
+                    db.close()
+                
+        except Exception as e:
+            print(f"[Scanner-CLI] Gemini scan crashed for {artist['name']}: {e}")
+            return 0
+
 
 async def main():
     if len(sys.argv) < 2:
@@ -162,95 +351,24 @@ async def main():
         print(f"Failed to read JSON: {e}")
         sys.exit(1)
 
-    print(f"[Scanner-CLI] Starting scan for {len(artist_data)} artists...")
+    print(f"[Scanner-CLI] Starting concurrent scan for {len(artist_data)} artists (max 5 parallel)...")
 
+    artist_name_map = {a["id"]: a["name"] for a in artist_data}
+    
+    # ─── Process concurrently with a Semaphore ───
+    semaphore = asyncio.Semaphore(5)
+    
     try:
-        results = await scan_artists_for_scandals(artist_data)
+        tasks = [
+            process_artist(artist, artist_name_map, semaphore)
+            for artist in artist_data
+        ]
         
-        db = SessionLocal()
-        newly_created_scandal_ids = []
-        artist_name_map = {a["id"]: a["name"] for a in artist_data}
-        
-        try:
-            for artist_result in results:
-                artist_id = artist_result.get("artist_id")
-                
-                # Update last scanned time
-                db_artist = db.query(Artist).filter(Artist.id == artist_id).first()
-                if db_artist:
-                    db_artist.last_scanned_at = datetime.now(timezone.utc)
+        results = await asyncio.gather(*tasks)
+        total_processed = sum(results)
 
-                for scandal_data in artist_result.get("scandals", []):
-                    if not isinstance(scandal_data, dict):
-                        continue
-                        
-                    raw_description = scandal_data.get("description")
-                    description = str(raw_description).strip() if raw_description is not None else ""
-                    
-                    if not description:
-                        continue
-                        
-                    existing = (
-                        db.query(Scandal)
-                        .filter(
-                            Scandal.artist_id == artist_id,
-                            Scandal.description == description,
-                        )
-                        .first()
-                    )
-                    if existing:
-                        continue
-
-                    raw_title = scandal_data.get("title")
-                    title = str(raw_title).strip() if raw_title is not None else ""
-
-                    scandal = Scandal(
-                        artist_id=artist_id,
-                        title=title,
-                        description=description,
-                        verified=False,
-                    )
-                    db.add(scandal)
-                    db.flush() # Flush to get scandal.id
-                    newly_created_scandal_ids.append(scandal.id)
-
-                    for source_item in scandal_data.get("sources", []):
-                        if source_item is None:
-                            continue
-                            
-                        if isinstance(source_item, dict):
-                            raw_url = source_item.get("url")
-                            url = str(raw_url).strip() if raw_url is not None else ""
-                            src_title = source_item.get("title")
-                        else:
-                            url = str(source_item).strip()
-                            src_title = None
-
-                        if url:
-                            source = ScandalSource(
-                                scandal_id=scandal.id,
-                                source_url=url,
-                                source_title=src_title,
-                            )
-                            db.add(source)
-
-            db.commit()
-            print(f"[Scanner-CLI] Initial scan DB insertions completed.")
+        print(f"\n[Scanner-CLI] Full scan cycle finished successfully. Processed {total_processed} artists.")
             
-            # ─── Post-Scan Cleanup ───
-            await cleanup_redirects(db)
-            
-            # ─── Post-Scan Verification & Healing ───
-            await verify_and_heal_scandals(db, newly_created_scandal_ids, artist_name_map)
-            
-            print(f"[Scanner-CLI] Full scan cycle finished successfully. Updated {len(results)} artists.")
-            
-        except Exception as e:
-            db.rollback()
-            print(f"[Scanner-CLI] Database update failed: {e}")
-            raise
-        finally:
-            db.close()
     except Exception as e:
         print(f"[Scanner-CLI] CLI scan crash: {e}")
         import traceback

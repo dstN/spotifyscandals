@@ -118,6 +118,18 @@
       isSubmittingCommunity = false
     }
   }
+  function formatSourceLabel(url) {
+    if (!url) return ''
+    try {
+      const parsed = new URL(url)
+      if (parsed.hostname.includes('vertexaisearch')) {
+        return '🔗 Grounded Source'
+      }
+      return parsed.hostname.replace('www.', '')
+    } catch {
+      return url
+    }
+  }
 </script>
 
 <div class="mx-auto max-w-3xl pt-8 pb-20 relative">
@@ -272,6 +284,7 @@
                   </svg>
                 </div>
               </div>
+            </div>
             </button>
             
             <!-- Accordion Content -->
@@ -354,7 +367,7 @@
                           >
                             <span class="text-text-tertiary transition-colors group-hover/link:text-text-secondary mt-0.5 shrink-0">↗</span>
                             <span class="break-all pr-4 flex-1">
-                              {source.source_url.includes('vertexaisearch') ? 'Google Search Grounding Result' : source.source_url}
+                              {source.source_title || formatSourceLabel(source.source_url)}
                             </span>
                           </a>
                           {#if !source.is_reported}
