@@ -7,7 +7,7 @@ node_modules/
 coverage/
 scan.log
 .agent/
-.backUp/
+.backup/
 
 # Production builds
 dist/
