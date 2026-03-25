@@ -12,6 +12,8 @@ from models import Artist, Scandal, ScandalSource, BatchJob
 from services.gemini import scan_artists_for_scandals, _resolve_url_deep, verify_source_relevance, find_better_sources, score_source_relevance, is_blocked_domain, get_rate_limiter, submit_batch_job
 import logging
 
+logger = logging.getLogger(__name__)
+
 # Global lock — ensures only one artist writes to SQLite at a time.
 # Scanning, scoring, and content-fetching still happens fully in parallel.
 _db_write_lock = asyncio.Lock()
@@ -30,6 +32,10 @@ class LoggerWriter:
         self.original_stream.flush()
         self.log_file.flush()
 
+    def close(self):
+        if self.log_file and not self.log_file.closed:
+            self.log_file.close()
+
 async def cleanup_redirects(db):
     """Loop through DB and resolve any remaining vertexaisearch URLs."""
     redirect_prefix = "https://vertexaisearch.cloud.google.com/"
@@ -38,19 +44,19 @@ async def cleanup_redirects(db):
     if not sources:
         return
 
-    print(f"[Scanner-CLI] Found {len(sources)} unresolved redirect(s). Cleaning up...")
+    logger.info("Found %s unresolved redirect(s). Cleaning up...", len(sources))
     
     for src in sources:
         try:
-            print(f"[Scanner-CLI] Resolving: {src.source_url[:60]}...")
+            logger.info("Resolving: %s...", src.source_url[:60])
             resolved = await _resolve_url_deep(src.source_url, src.source_title)
             if resolved["url"] != src.source_url:
                 src.source_url = resolved["url"]
                 if resolved["title"]:
                     src.source_title = resolved["title"]
-                print(f"[Scanner-CLI] Fixed -> {src.source_url[:60]}")
+                logger.info("Fixed -> %s", src.source_url[:60])
         except Exception as e:
-            print(f"[Scanner-CLI] Cleanup failed for {src.id}: {e}")
+            logger.exception("Cleanup failed for %s: %s", src.id, e)
     
     db.commit()
 
@@ -65,13 +71,13 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
     MAX_SOURCES = 5
     MIN_SCORE = 8  # Pre-filter threshold (0-10 scale)
 
-    print(f"\n[Scanner-CLI] Starting Source Verification for {len(new_scandal_ids)} new scandal(s)...")
+    logger.info("Starting Source Verification for %s new scandal(s)...", len(new_scandal_ids))
     
     scandals = db.query(Scandal).filter(Scandal.id.in_(new_scandal_ids)).all()
     
     for scandal in scandals:
         artist_name = artist_name_map.get(scandal.artist_id, "Unknown Artist")
-        print(f"\n[Scanner-CLI] --- Verifying Scandal: {scandal.title} ({artist_name}) ---")
+        logger.info("--- Verifying Scandal: %s (%s) ---", scandal.title, artist_name)
         
         sources = db.query(ScandalSource).filter(ScandalSource.scandal_id == scandal.id).all()
         
@@ -80,7 +86,7 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
         for src in sources:
             # Blocked domain fast-reject
             if is_blocked_domain(src.source_url):
-                print(f"[Scanner-CLI] 🚫 Blocked domain, skipping: {src.source_url[:60]}")
+                logger.warning("🚫 Blocked domain, skipping: %s", src.source_url[:60])
                 src.is_verified = False
                 continue
 
@@ -88,27 +94,27 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
             if verified_count < MAX_SOURCES:
                 score = await score_source_relevance(src.source_url, scandal.title, scandal.description)
                 if score < MIN_SCORE:
-                    print(f"[Scanner-CLI] ⬇️ Score {score}/10 too low, skipping deep verify: {src.source_url[:60]}")
+                    logger.warning("⬇️ Score %s/10 too low, skipping deep verify: %s", score, src.source_url[:60])
                     src.is_verified = False
                     continue
 
                 is_valid = await verify_source_relevance(src.source_url, scandal.title, scandal.description)
                 src.is_verified = is_valid
                 if is_valid:
-                    print(f"[Scanner-CLI] ✅ Source verified: {src.source_url[:60]}")
+                    logger.info("✅ Source verified: %s", src.source_url[:60])
                     verified_count += 1
                 else:
-                    print(f"[Scanner-CLI] ❌ Source irrelevant: {src.source_url[:60]}")
+                    logger.info("❌ Source irrelevant: %s", src.source_url[:60])
             else:
                 # Already have enough verified sources — mark the rest unverified
                 src.is_verified = False
-                print(f"[Scanner-CLI] 🔢 Source cap reached ({MAX_SOURCES}), skipping: {src.source_url[:60]}")
+                logger.warning("🔢 Source cap reached (%s), skipping: %s", MAX_SOURCES, src.source_url[:60])
                 
         db.commit()
         
         # 2. Healing Loop: If 0 verified sources, try to find new ones
         if verified_count == 0:
-            print(f"[Scanner-CLI] ⚠️ Scandal lost all sources. Initiating healing loop...")
+            logger.warning("⚠️ Scandal lost all sources. Initiating healing loop...")
             new_sources_data = await find_better_sources(artist_name, scandal.title, scandal.description)
             
             healed = False
@@ -121,18 +127,18 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
                 if not url or is_blocked_domain(url):
                     continue
                     
-                print(f"[Scanner-CLI] Checking heal candidate: {url[:60]}...")
+                logger.info("Checking heal candidate: %s...", url[:60])
                 
                 # Pre-score the heal candidate too
                 score = await score_source_relevance(url, scandal.title, scandal.description)
                 if score < MIN_SCORE:
-                    print(f"[Scanner-CLI] ⬇️ Heal candidate score too low ({score}/10), skipping.")
+                    logger.warning("⬇️ Heal candidate score too low (%s/10), skipping.", score)
                     continue
                 
                 is_valid = await verify_source_relevance(url, scandal.title, scandal.description)
                 
                 if is_valid:
-                    print(f"[Scanner-CLI] 💉 Healing successful! Adding verified source.")
+                    logger.info("💉 Healing successful! Adding verified source.")
                     new_src = ScandalSource(
                         scandal_id=scandal.id,
                         source_url=url,
@@ -143,23 +149,23 @@ async def verify_and_heal_scandals(db, new_scandal_ids: list[int], artist_name_m
                     healed = True
                     verified_count += 1
                 else:
-                    print(f"[Scanner-CLI] ➖ Heal candidate failed deep verify. Skipping.")
+                    logger.warning("➖ Heal candidate failed deep verify. Skipping.")
             
             db.commit()
             
             # 3. Final verdict
             if not healed:
-                print(f"[Scanner-CLI] ⚠️ Healing failed. Scandal '{scandal.title}' remains unverified.")
+                logger.warning("⚠️ Healing failed. Scandal '%s' remains unverified.", scandal.title)
             else:
-                print(f"[Scanner-CLI] 🏥 Scandal recovered with {verified_count} verified sources.")
+                logger.info("🏥 Scandal recovered with %s verified sources.", verified_count)
         else:
-             print(f"[Scanner-CLI] ✓ Verified. {verified_count}/{MAX_SOURCES} max source(s).")
+             logger.info("✓ Verified. %s/%s max source(s).", verified_count, MAX_SOURCES)
 
         # Update the scandal verification status
         scandal.verified = (verified_count > 0)
         db.commit()
 
-    print(f"\n[Scanner-CLI] Source Verification Complete.")
+    logger.info("Source Verification Complete.")
 
 async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio.Semaphore) -> int:
     """Process a single artist: scan for scandals, verify sources inline, then save to DB."""
@@ -167,7 +173,7 @@ async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio
     MIN_SCORE = 7  # Sources must score > 7 (i.e. 8, 9, or 10) to be accepted
 
     async with semaphore:
-        print(f"\n[Scanner-CLI] === Processing Artist: {artist['name']} ===")
+        logger.info("=== Processing Artist: %s ===", artist['name'])
         try:
             # 0. Fetch existing scandal titles so Gemini won't re-generate them
             try:
@@ -182,9 +188,9 @@ async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio
                         for r in existing_rows
                     ]
                     if artist["existing_scandals"]:
-                        print(f"[Scanner-CLI] ℹ️ {len(artist['existing_scandals'])} existing scandal(s) will be excluded from scan.")
+                        logger.info("ℹ️ %s existing scandal(s) will be excluded from scan.", len(artist['existing_scandals']))
             except Exception as e:
-                print(f"[Scanner-CLI] Could not fetch existing scandals: {e}")
+                logger.info("Could not fetch existing scandals: %s", e)
                 artist["existing_scandals"] = []
 
             # 1. Scan this single artist via Gemini
@@ -234,15 +240,15 @@ async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio
 
                     score = await score_source_relevance(url, title, description)
                     if score <= MIN_SCORE:
-                        print(f"[Scanner-CLI] ⬇️ Score {score}/10 too low (need >{MIN_SCORE}), skipping: {url[:60]}")
+                        logger.warning("⬇️ Score %s/10 too low (need >%s), skipping: %s", score, MIN_SCORE, url[:60])
                         continue
 
-                    print(f"[Scanner-CLI] ✅ Source accepted (score {score}/10): {url[:60]}")
+                    logger.info("✅ Source accepted (score %s/10): %s", score, url[:60])
                     accepted_sources.append({"url": url, "title": src_title})
 
                 # Healing loop if nothing passed
                 if not accepted_sources:
-                    print(f"[Scanner-CLI] ⚠️ No sources passed gates for '{title}'. Starting healing loop...")
+                    logger.warning("⚠️ No sources passed gates for '%s'. Starting healing loop...", title)
                     heal_sources = await find_better_sources(artist["name"], title, description)
 
                     for src_data in heal_sources:
@@ -255,14 +261,14 @@ async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio
 
                         score = await score_source_relevance(url, title, description)
                         if score <= MIN_SCORE:
-                            print(f"[Scanner-CLI] ⬇️ Heal candidate score too low ({score}/10), skipping.")
+                            logger.warning("⬇️ Heal candidate score too low (%s/10), skipping.", score)
                             continue
 
-                        print(f"[Scanner-CLI] 💉 Healing: accepted source (score {score}/10): {url[:60]}")
+                        logger.info("💉 Healing: accepted source (score %s/10): %s", score, url[:60])
                         accepted_sources.append({"url": url, "title": src_title})
 
                     if not accepted_sources:
-                        print(f"[Scanner-CLI] ⚠️ Healing failed. Scandal '{title}' has no verified sources.")
+                        logger.warning("⚠️ Healing failed. Scandal '%s' has no verified sources.", title)
 
                 scandals_to_save.append({
                     "title": title,
@@ -305,31 +311,31 @@ async def process_artist(artist: dict, artist_name_map: dict, semaphore: asyncio
                                 source_title=src["title"],
                                 is_verified=True,
                             ))
-                        print(f"[Scanner-CLI] Scandal '{s['title']}': {len(s['sources'])} verified source(s) written.")
+                        logger.info("Scandal '%s': %s verified source(s) written.", s['title'], len(s['sources']))
 
                     db.commit()
-                    print(f"[Scanner-CLI] ✓ All data saved for {artist['name']}.")
+                    logger.info("✓ All data saved for %s.", artist['name'])
                     return 1
 
                 except Exception as e:
                     db.rollback()
-                    print(f"[Scanner-CLI] Database update failed for {artist['name']}: {e}")
+                    logger.exception("Database update failed for %s: %s", artist['name'], e)
                     return 0
                 finally:
                     db.close()
                 
         except RuntimeError as e:
             # Rate limit exhausted — propagate to stop remaining tasks
-            print(f"[Scanner-CLI] ⛔ Rate limit hit for {artist['name']}: {e}")
+            logger.error("⛔ Rate limit hit for %s: %s", artist['name'], e)
             raise
         except Exception as e:
-            print(f"[Scanner-CLI] Gemini scan crashed for {artist['name']}: {e}")
+            logger.exception("Gemini scan crashed for %s: %s", artist['name'], e)
             return 0
 
 
 async def main():
     if len(sys.argv) < 2:
-        print("Usage: python scanner_cli.py <path_to_json>")
+        logger.info("Usage: python scanner_cli.py <path_to_json>")
         sys.exit(1)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -341,24 +347,24 @@ async def main():
     try:
         json_path = sys.argv[1]
     except IndexError:
-        print("Usage: python scanner_cli.py <path_to_json>")
+        logger.info("Usage: python scanner_cli.py <path_to_json>")
         sys.exit(1)
 
     if not os.path.exists(json_path):
-        print(f"File not found: {json_path}")
+        logger.info("File not found: %s", json_path)
         sys.exit(1)
 
     try:
         with open(json_path, 'r') as f:
             artist_data = json.load(f)
     except Exception as e:
-        print(f"Failed to read JSON: {e}")
+        logger.exception("Failed to read JSON: %s", e)
         sys.exit(1)
 
     # ─── Batch Mode (default — 50% token cost discount) ───
     # Use --sync to force synchronous real-time scanning instead.
     if "--sync" not in sys.argv:
-        print(f"[Scanner-CLI] Batch mode (default): submitting {len(artist_data)} artists to Gemini Batch API...")
+        logger.info("Batch mode (default): submitting %s artists to Gemini Batch API...", len(artist_data))
 
         # Enrich artists with existing scandals to avoid duplicates
         with SessionLocal() as db:
@@ -376,7 +382,7 @@ async def main():
         try:
             job_name = submit_batch_job(artist_data)
         except Exception as e:
-            print(f"[Scanner-CLI] Batch submission failed: {e}")
+            logger.exception("Batch submission failed: %s", e)
             sys.exit(1)
 
         # Save BatchJob to DB
@@ -388,9 +394,9 @@ async def main():
             )
             db.add(batch_job)
             db.commit()
-            print(f"[Scanner-CLI] BatchJob saved (id={batch_job.id}, job_name={job_name})")
+            logger.info("BatchJob saved (id=%s, job_name=%s)", batch_job.id, job_name)
 
-        print(f"[Scanner-CLI] Batch submitted. Use batch_poller.py to poll for results.")
+        logger.info("Batch submitted. Use batch_poller.py to poll for results.")
 
         # Cleanup temp file
         try:
@@ -401,10 +407,10 @@ async def main():
         return
 
     # ─── Synchronous Mode (opt-in via --sync) ───
-    print(f"[Scanner-CLI] Sync mode (--sync): scanning {len(artist_data)} artists in real-time (max 5 parallel)...")
+    logger.info("Sync mode (--sync): scanning %s artists in real-time (max 5 parallel)...", len(artist_data))
 
     limiter = get_rate_limiter()
-    print(f"[Scanner-CLI] Rate limiter mode: {limiter.mode} | Model RPD: {limiter.model_rpd} | Search RPD: {limiter.search_rpd}")
+    logger.info("Rate limiter mode: %s | Model RPD: %s | Search RPD: %s", limiter.mode, limiter.model_rpd, limiter.search_rpd)
 
     artist_name_map = {a["id"]: a["name"] for a in artist_data}
     
@@ -429,13 +435,13 @@ async def main():
                 total_processed += r
 
         stats = limiter.stats
-        print(f"\n[Scanner-CLI] Full scan cycle finished. Processed {total_processed} artists.")
-        print(f"[Scanner-CLI] Rate limiter stats: Model {stats['model_rpd_used']}/{stats['model_rpd_limit']} RPD | Search {stats['search_rpd_used']}/{stats['search_rpd_limit']} RPD")
+        logger.info("Full scan cycle finished. Processed %s artists.", total_processed)
+        logger.info("Rate limiter stats: Model %s/%s RPD | Search %s/%s RPD", stats['model_rpd_used'], stats['model_rpd_limit'], stats['search_rpd_used'], stats['search_rpd_limit'])
         if rate_limited:
-            print(f"[Scanner-CLI] ⛔ Some artists were skipped due to rate limits. Re-run tomorrow or switch to unlimited mode.")
+            logger.error("⛔ Some artists were skipped due to rate limits. Re-run tomorrow or switch to unlimited mode.")
             
     except Exception as e:
-        print(f"[Scanner-CLI] CLI scan crash: {e}")
+        logger.exception("CLI scan crash: %s", e)
         import traceback
         traceback.print_exc()
     finally:
@@ -443,9 +449,22 @@ async def main():
         try:
             if os.path.exists(json_path):
                 os.remove(json_path)
-                print(f"[Scanner-CLI] Cleaned up temp file: {json_path}")
+                logger.info("Cleaned up temp file: %s", json_path)
         except Exception as e:
-            print(f"[Scanner-CLI] Cleanup failed: {e}")
+            logger.exception("Cleanup failed: %s", e)
+
+        # Remove the scan lock file so future scans can proceed
+        lock_path = os.path.join(base_dir, "scan.lock")
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+                logger.info("Removed scan.lock")
+        except OSError:
+            pass
+
+        # Close LoggerWriter file handles
+        if hasattr(sys.stdout, 'close'):
+            sys.stdout.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

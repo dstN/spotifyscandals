@@ -2,14 +2,18 @@
 Playlists router — handles Spotify playlist submission and artist extraction.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from database import get_db
-from models import Artist
+from models import Artist, Scandal
 from schemas import PlaylistSubmit, PlaylistSubmitResponse, PlaylistArtist
 from services.spotify import fetch_playlist
-from sqlalchemy import func
-from models import Scandal
+from errors import bad_request
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/playlists", tags=["Playlists"])
 
@@ -23,11 +27,9 @@ async def submit_playlist(body: PlaylistSubmit, db: Session = Depends(get_db)):
     """
     try:
         result = await fetch_playlist(body.playlist_url)
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to fetch playlist: {str(e)}"
-        )
+    except Exception:
+        logger.exception("Failed to fetch playlist")
+        bad_request("Failed to fetch playlist. Please check the URL and try again.")
 
     added = 0
     skipped = 0

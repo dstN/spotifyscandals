@@ -1,5 +1,5 @@
 /**
- * API client for the Skandal Tracker backend.
+ * API client for the spotifyscandals backend.
  * All requests are proxied through Vite → FastAPI during development.
  */
 
@@ -22,7 +22,8 @@ async function request(path, options = {}) {
 
   const isVoteEndpoint = path.includes('/vote')
   const isPublicCommunitySubmit = path.includes('/artists/') && path.includes('/community-scandals')
-  const isPublicCommunitySourceSubmit = path.includes('/community-sources') && !path.includes('/approve')
+  const isPublicCommunitySourceSubmit =
+    path.includes('/community-sources') && !path.includes('/approve')
 
   if ((isVoteEndpoint || isPublicCommunitySubmit || isPublicCommunitySourceSubmit) && userToken) {
     // These public endpoints strictly require a public user token
@@ -138,10 +139,6 @@ export function scanForScandals(artistIds = []) {
     method: 'POST',
     body: JSON.stringify({ artist_ids: artistIds }),
   })
-}
-
-export function triggerAutoScan() {
-  return request('/admin/trigger-auto-scan', { method: 'POST' })
 }
 
 export function verifyScandal(id) {

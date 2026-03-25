@@ -7,6 +7,8 @@
   onMount(() => {
     const path = window.location.pathname
     const params = new URLSearchParams(window.location.search)
+    // Tokens are passed via URL fragment (hash) for security — not sent to servers
+    const hashParams = new URLSearchParams(window.location.hash.substring(1))
 
     if (path === '/auth/error') {
       error = params.get('message') || 'Unknown authentication error'
@@ -15,8 +17,8 @@
         history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate'))
       }, 3000)
     } else if (path === '/auth/callback') {
-      const token = params.get('token')
-      const spotifyToken = params.get('spotify_token')
+      const token = hashParams.get('token')
+      const spotifyToken = hashParams.get('spotify_token')
       if (token) {
         publicToken.set(token)
         if (spotifyToken) spotifyAccessToken.set(spotifyToken)

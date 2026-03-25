@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 from functools import lru_cache
 import os
+import secrets
 from dotenv import load_dotenv
 
 # Load .env from project root (one level up from backend/)
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = "http://127.0.0.1:8001/api/public/auth/spotify/callback"
-    frontend_url: str = "http://localhost:5173"
+    frontend_url: str = "http://127.0.0.1:5173"
 
     # ─── Google Gemini Pro ───
     gemini_api_key: str = ""
@@ -30,12 +31,20 @@ class Settings(BaseSettings):
     gemini_model_rpm: int = 15               # Requests per minute (model calls)
     gemini_model_rpd: int = 1500             # Requests per day (model calls)
     gemini_search_rpd: int = 1500            # Requests per day (Google Search grounding)
-    auto_scan_enabled: bool = True           # Enable Top 50 auto-scan on startup
 
     # ─── Auth (Admin User & JWT) ───
     admin_username: str = "admin"
-    admin_password: str = "secret"
-    jwt_secret: str = "super_secret_jwt_key_change_in_production"
+    # Store a bcrypt hash — generate with: python -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
+    admin_password_hash: str = ""
+    jwt_secret: str = ""
+
+    @field_validator("jwt_secret", mode="before")
+    @classmethod
+    def set_jwt_secret(cls, v: str) -> str:
+        """Auto-generate a random JWT secret if not explicitly set or too weak."""
+        if not v or len(v) < 32 or "change" in v.lower():
+            return secrets.token_urlsafe(32)
+        return v
 
     # ─── Database ───
     database_url: str = Field(default="sqlite:///./spotiscandals.db")

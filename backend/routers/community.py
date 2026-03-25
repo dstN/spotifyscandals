@@ -2,14 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session, joinedload
 from database import get_db
 from models import CommunityScandal, CommunitySource, Scandal, ScandalSource, Artist
-from schemas import CommunityScandalResponse, CommunitySourceResponse, ScandalResponse
+from schemas import CommunityScandalResponse, CommunitySourceResponse, ScandalResponse, PendingCountResponse, MessageResponse
 from auth_deps import require_admin
+from errors import not_found
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/community-scandals", tags=["Community Scandals"])
 
 
-@router.get("/pending-count")
+@router.get("/pending-count", response_model=PendingCountResponse)
 def get_pending_count(db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Return counts of pending community scandals and sources for notification badges."""
     scandal_count = db.query(CommunityScandal).count()
@@ -51,11 +52,11 @@ def verify_community_submission(
     """
     submission = db.query(CommunityScandal).filter(CommunityScandal.id == submission_id).first()
     if not submission:
-        raise HTTPException(status_code=404, detail="Community submission not found")
+        not_found("Community submission")
 
     artist = db.query(Artist).filter(Artist.id == submission.artist_id).first()
     if not artist:
-        raise HTTPException(status_code=404, detail="Associated artist not found")
+        not_found("Associated artist")
 
     # 1. Create the permanent Scandal
     new_scandal = Scandal(
@@ -98,12 +99,12 @@ def verify_community_submission(
     )
 
 
-@router.delete("/{submission_id}")
+@router.delete("/{submission_id}", response_model=MessageResponse)
 def delete_community_submission(submission_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Reject and delete a community submission entirely."""
     submission = db.query(CommunityScandal).filter(CommunityScandal.id == submission_id).first()
     if not submission:
-        raise HTTPException(status_code=404, detail="Community submission not found")
+        not_found("Community submission")
         
     db.delete(submission)
     db.commit()
@@ -147,12 +148,12 @@ def get_pending_community_sources(db: Session = Depends(get_db), admin: str = De
     ]
 
 
-@router.post("/sources/{source_id}/approve")
+@router.post("/sources/{source_id}/approve", response_model=MessageResponse)
 def approve_community_source(source_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Approve a community source — creates a verified ScandalSource and deletes the pending entry."""
     cs = db.query(CommunitySource).filter(CommunitySource.id == source_id).first()
     if not cs:
-        raise HTTPException(status_code=404, detail="Community source not found")
+        not_found("Community source")
 
     new_source = ScandalSource(
         scandal_id=cs.scandal_id,
@@ -165,12 +166,12 @@ def approve_community_source(source_id: int, db: Session = Depends(get_db), admi
     return {"detail": "Source approved and added to scandal"}
 
 
-@router.delete("/sources/{source_id}")
+@router.delete("/sources/{source_id}", response_model=MessageResponse)
 def reject_community_source(source_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Reject and delete a community-submitted source."""
     cs = db.query(CommunitySource).filter(CommunitySource.id == source_id).first()
     if not cs:
-        raise HTTPException(status_code=404, detail="Community source not found")
+        not_found("Community source")
 
     db.delete(cs)
     db.commit()

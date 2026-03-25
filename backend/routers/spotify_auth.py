@@ -1,17 +1,51 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 import httpx
 import jwt
+import logging
+import secrets
+import time
 from datetime import datetime, timedelta, timezone
-from config import get_settings
+from config import Settings, get_settings
 import urllib.parse
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/public/auth/spotify", tags=["Spotify Auth"])
 
+# ── CSRF State Store ──
+# Server-side state store for OAuth CSRF protection.
+# This is the standard approach used by most OAuth libraries (Django social-auth,
+# Flask-Dance, etc.) — the state token is stored server-side and validated on
+# callback. Works regardless of proxy/cookie configuration.
+# For multi-instance deployments, replace with Redis or database storage.
+_pending_states: dict[str, float] = {}
+_MAX_STATES = 1000  # prevent unbounded growth
+
+
+def _cleanup_expired_states():
+    """Remove expired state tokens."""
+    now = time.time()
+    expired = [k for k, v in _pending_states.items() if v < now]
+    for k in expired:
+        del _pending_states[k]
+
+
 @router.get("/login")
-def login_with_spotify():
+def login_with_spotify(request: Request, settings: Settings = Depends(get_settings)):
     """Redirect user to Spotify for OAuth login."""
-    settings = get_settings()
+    _cleanup_expired_states()
+
+    # Enforce a cap to prevent memory abuse
+    if len(_pending_states) >= _MAX_STATES:
+        log.warning("OAuth state store full (%d entries), pruning oldest", len(_pending_states))
+        oldest = sorted(_pending_states, key=_pending_states.get)[:len(_pending_states) // 2]
+        for k in oldest:
+            del _pending_states[k]
+
+    state = secrets.token_urlsafe(32)
+    _pending_states[state] = time.time() + 600  # 10 min TTL
+
     scope = "user-read-private user-read-email user-top-read"
     query_params = {
         "client_id": settings.spotify_client_id,
@@ -19,18 +53,30 @@ def login_with_spotify():
         "redirect_uri": settings.spotify_redirect_uri,
         "scope": scope,
         "show_dialog": "false",
+        "state": state,
     }
     url = f"https://accounts.spotify.com/authorize?{urllib.parse.urlencode(query_params)}"
     return RedirectResponse(url)
 
+
 @router.get("/callback")
-async def spotify_callback(code: str = None, error: str = None):
+async def spotify_callback(
+    request: Request,
+    code: str = None,
+    error: str = None,
+    state: str = None,
+    settings: Settings = Depends(get_settings),
+):
     """Handle the OAuth callback from Spotify."""
-    settings = get_settings()
-    
     if error:
         return RedirectResponse(f"{settings.frontend_url}/auth/error?message={error}")
-    
+
+    # Validate CSRF state token
+    if not state or state not in _pending_states or _pending_states[state] < time.time():
+        log.warning("OAuth CSRF validation failed (state %s)", "missing" if not state else "invalid/expired")
+        return RedirectResponse(f"{settings.frontend_url}/auth/error?message=Invalid_state")
+    del _pending_states[state]  # one-time use
+
     if not code:
         return RedirectResponse(f"{settings.frontend_url}/auth/error?message=Missing_code")
         
@@ -80,5 +126,6 @@ async def spotify_callback(code: str = None, error: str = None):
     }
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret, algorithm="HS256")
     
-    # Redirect back to frontend with both internal JWT and Spotify access token
-    return RedirectResponse(f"{settings.frontend_url}/auth/callback?token={encoded_jwt}&spotify_token={access_token}")
+    # Redirect back to frontend with tokens in URL fragment (not query params)
+    # Fragments are not sent to servers and not included in Referer headers
+    return RedirectResponse(f"{settings.frontend_url}/auth/callback#token={encoded_jwt}&spotify_token={access_token}")

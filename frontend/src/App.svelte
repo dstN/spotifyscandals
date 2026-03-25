@@ -55,7 +55,7 @@
     const anchor = e.target.closest('a')
     if (!anchor) return
     const href = anchor.getAttribute('href')
-    if (!href || href.startsWith('http') || href.startsWith('mailto:') || anchor.target === '_blank') return
+    if (!href || href.startsWith('http') || href.startsWith('mailto:') || href.startsWith('/api/') || anchor.target === '_blank') return
     if (href.startsWith('/')) {
       e.preventDefault()
       navigate(href)

@@ -14,6 +14,9 @@ def require_admin(credentials: HTTPAuthorizationCredentials = Depends(security))
     token = credentials.credentials
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        # Require explicit admin role claim — reject any other role
+        if payload.get("role") != "admin":
+            raise HTTPException(status_code=401, detail="Not an admin token")
         if payload.get("sub") != settings.admin_username:
             raise HTTPException(status_code=401, detail="Invalid admin token")
     except jwt.ExpiredSignatureError:

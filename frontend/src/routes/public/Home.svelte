@@ -1,20 +1,32 @@
 <script>
   import { onMount } from 'svelte'
   import { fetchArtists } from '../../lib/api.js'
-  import { showToast, spotifyUser, publicToken, spotifyAccessToken } from '../../lib/stores.js'
+  import { showToast, spotifyUser, publicToken, spotifyAccessToken, playlistFilterIds } from '../../lib/stores.js'
 
   let artists = $state([])
   let loading = $state(true)
   let searchQuery = $state('')
   let showSearch = $state(false)
   let userTopArtists = $state([])
+  let filterIds = $state(null)
+  let showTopOnly = $state(false)
+
+  // Subscribe to playlist filter
+  const unsubFilter = playlistFilterIds.subscribe(v => filterIds = v)
 
   // ── Sorting ──
   let sortBy = $state('scandals') // 'scandals', 'name', 'severity', 'newest'
   let sortDesc = $state(true)
 
+  // Filter: playlist filter > top artists filter > all
+  let filteredArtists = $derived.by(() => {
+    if (filterIds) return artists.filter(a => filterIds.includes(a.id))
+    if (showTopOnly && userTopArtists.length > 0) return userTopArtists
+    return artists
+  })
+
   let sortedArtists = $derived.by(() => {
-    return [...artists].sort((a, b) => {
+    return [...filteredArtists].sort((a, b) => {
       let valA, valB;
       if (sortBy === 'name') {
         valA = a.name.toLowerCase();
@@ -122,9 +134,21 @@
     }
   }
 
+  function clearFilter() {
+    playlistFilterIds.set(null)
+  }
+
   onMount(async () => {
+    // If we have a playlist filter, force show the search/grid view
+    if (filterIds) showSearch = true
     await loadArtists()
     await loadTopArtists()
+    // Auto-show top artists when logged in
+    if (userTopArtists.length > 0 && !filterIds) {
+      showTopOnly = true
+      showSearch = true
+    }
+    return () => unsubFilter()
   })
 
   let searchTimeout
@@ -166,8 +190,38 @@
     </p>
   </div>
 
+  <!-- Filter banners -->
+  {#if filterIds}
+    <div class="glass flex items-center justify-between px-5 py-3 mb-6 border border-spotify/20">
+      <p class="text-sm text-text-secondary">
+        Showing <span class="font-bold text-spotify">{filteredArtists.length}</span> artists from your playlist
+      </p>
+      <button onclick={clearFilter} class="text-sm font-medium text-text-tertiary hover:text-white transition-colors cursor-pointer">
+        Show all artists
+      </button>
+    </div>
+  {:else if showTopOnly && userTopArtists.length > 0}
+    <div class="glass flex items-center justify-between px-5 py-3 mb-6 border border-spotify/20">
+      <p class="text-sm text-text-secondary">
+        <span class="text-spotify">♫</span> Showing your <span class="font-bold text-spotify">{userTopArtists.length}</span> top artists
+      </p>
+      <button onclick={() => showTopOnly = false} class="text-sm font-medium text-text-tertiary hover:text-white transition-colors cursor-pointer">
+        Show all artists
+      </button>
+    </div>
+  {:else if !showTopOnly && userTopArtists.length > 0}
+    <div class="glass flex items-center justify-between px-5 py-3 mb-6 border border-glass-border">
+      <p class="text-sm text-text-secondary">
+        Showing all <span class="font-bold text-text-primary">{artists.length}</span> tracked artists
+      </p>
+      <button onclick={() => showTopOnly = true} class="text-sm font-medium text-spotify hover:text-white transition-colors cursor-pointer">
+        ♫ Show my top artists
+      </button>
+    </div>
+  {/if}
+
   <!-- Landing View for Logged Out Users -->
-  {#if !$spotifyUser && !showSearch}
+  {#if !$spotifyUser && !showSearch && !filterIds}
     <div class="fade-in max-w-lg mx-auto mt-16 text-center space-y-6">
       <div class="glass p-8 flex flex-col items-center gap-6">
         <h2 class="text-2xl font-bold text-text-primary">Help us uncover the truth</h2>
@@ -216,41 +270,6 @@
           {/if}
         </div>
       {:else}
-        <!-- Your Top Artists Section -->
-        {#if userTopArtists.length > 0}
-          <div class="mb-10">
-            <h2 class="text-xl font-bold text-text-primary mb-4 flex items-center gap-2">
-              <span class="text-spotify">♫</span> Your Top Artists
-            </h2>
-            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {#each userTopArtists as artist (artist.id)}
-                <a 
-                  href="/artist/{artist.id}" 
-                  class="glass group/card relative flex items-center gap-4 p-4 transition-all hover:-translate-y-1 block no-underline ring-1 ring-spotify/20"
-                >
-                  <img
-                    src={artist.image_url || 'https://misc.scdn.co/liked-songs/liked-songs-300.png'}
-                    alt="{artist.name} cover"
-                    class="h-16 w-16 rounded-full object-cover ring-2 ring-spotify/40 group-hover/card:ring-spotify transition-colors"
-                  />
-                  <div class="min-w-0 flex-1">
-                    <h3 class="truncate text-lg font-bold text-text-primary group-hover/card:text-spotify transition-colors">
-                      {artist.name}
-                    </h3>
-                    <p class="mt-1 text-sm text-text-secondary">
-                      {artist.scandal_count} scandal{artist.scandal_count === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                  <div class="absolute right-4 top-1/2 -translate-y-1/2 text-text-tertiary opacity-0 transition-opacity group-hover/card:opacity-100">
-                    &rarr;
-                  </div>
-                </a>
-              {/each}
-            </div>
-          </div>
-          <h2 class="text-xl font-bold text-text-primary mb-4">All Tracked Artists</h2>
-        {/if}
-
         <!-- Count & Sorting Controls -->
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4 px-1">
           <p class="text-sm text-text-tertiary">

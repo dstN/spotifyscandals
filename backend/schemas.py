@@ -3,7 +3,7 @@ Pydantic schemas for request validation and response serialization.
 Separates API contract from database models.
 """
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 from datetime import datetime
 from typing import Optional
 
@@ -14,7 +14,7 @@ from typing import Optional
 
 class PlaylistSubmit(BaseModel):
     """Request body for submitting a Spotify playlist URL."""
-    playlist_url: str
+    playlist_url: str = Field(..., min_length=10, max_length=1024)
 
 
 class PlaylistArtist(BaseModel):
@@ -102,9 +102,9 @@ class ScandalResponse(BaseModel):
 
 class CommunityScandalSubmit(BaseModel):
     """Request body for a public user submitting a missed scandal."""
-    title: str
-    description: str
-    source_url: Optional[str] = None
+    title: str = Field(..., min_length=3, max_length=200)
+    description: str = Field(..., min_length=10, max_length=5000)
+    source_url: Optional[str] = Field(None, max_length=2048)
 
 
 class CommunityScandalResponse(BaseModel):
@@ -124,17 +124,17 @@ class CommunityScandalResponse(BaseModel):
 
 class VoteRequest(BaseModel):
     """Request body for submitting a vote on a scandal."""
-    vote: int  # 0 to 10
+    vote: int = Field(..., ge=0, le=10)
 
 
 class AdminSourceCreate(BaseModel):
     """Request body for admin directly adding a source to a scandal."""
-    source_url: str
+    source_url: str = Field(..., min_length=10, max_length=2048)
 
 
 class CommunitySourceSubmit(BaseModel):
     """Request body for a public user submitting a source for an existing scandal."""
-    source_url: str
+    source_url: str = Field(..., min_length=10, max_length=2048)
 
 
 class ExistingSourceBrief(BaseModel):
@@ -187,3 +187,66 @@ class DashboardStats(BaseModel):
     total_scandals: int
     verified_scandals: int
     unverified_scandals: int
+
+
+# ═══════════════════════════════════════════
+#  Generic Response Schemas
+# ═══════════════════════════════════════════
+
+class MessageResponse(BaseModel):
+    """Generic message-only response."""
+    message: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class VoteResponse(BaseModel):
+    """Response after recording a vote."""
+    message: str
+    user_vote: int
+    average_vote: float
+    vote_count: int
+
+
+class VerifyToggleResponse(BaseModel):
+    """Response after toggling verification status."""
+    id: int
+    verified: bool
+
+
+class SourceVerifyToggleResponse(BaseModel):
+    """Response after toggling source verification status."""
+    id: int
+    is_verified: bool
+
+
+class SourceCreatedResponse(BaseModel):
+    """Response after creating a source."""
+    id: int
+    source_url: str
+    is_verified: bool
+
+
+class ArtistApproveResponse(BaseModel):
+    """Response after toggling artist approval."""
+    id: int
+    name: str
+    approved: bool
+
+
+class MessageCountResponse(BaseModel):
+    """Response with a message and a count."""
+    message: str
+    count: int
+
+
+class PendingCountResponse(BaseModel):
+    """Pending community items count."""
+    scandals: int
+    sources: int
+    total: int
+
+
+class ReportResponse(BaseModel):
+    """Response after reporting a source."""
+    message: str
+    is_reported: bool

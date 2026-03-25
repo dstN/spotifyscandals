@@ -8,10 +8,29 @@ from sqlalchemy import func
 from datetime import datetime, timezone, timedelta
 from database import get_db
 from models import Artist, Scandal, CommunityScandal
-from schemas import ArtistResponse, ArtistDetail, CommunityScandalSubmit, CommunityScandalResponse
+from schemas import ArtistResponse, ArtistDetail, CommunityScandalSubmit, CommunityScandalResponse, ArtistApproveResponse, MessageResponse, MessageCountResponse
 from auth_deps import require_admin, get_optional_public_user, get_current_public_user
+from errors import not_found, rate_limited
 
 router = APIRouter(prefix="/api/artists", tags=["Artists"])
+
+
+def _calculate_safety_score(scandals) -> tuple[int, float | None]:
+    """Calculate verified scandal count and safety score from an artist's scandals.
+
+    Returns (scandal_count, safety_score).
+    """
+    scandal_count = sum(1 for s in scandals if s.verified)
+    total_votes = 0
+    sum_votes = 0
+    for s in scandals:
+        sum_votes += sum(v.vote_value for v in s.votes)
+        total_votes += len(s.votes)
+    safety_score = None
+    if total_votes > 0:
+        avg_vote = sum_votes / total_votes
+        safety_score = ((10 - avg_vote) / 10) * 100
+    return scandal_count, safety_score
 
 
 @router.get("", response_model=list[ArtistResponse])
@@ -37,19 +56,7 @@ def list_artists(
     # Build response with scandal counts and safety scores
     result = []
     for artist in artists:
-        scandal_count = sum(1 for s in artist.scandals if s.verified)
-        
-        # Calculate safety percentage logic
-        total_votes = 0
-        sum_votes = 0
-        for s in artist.scandals:
-            sum_votes += sum(v.vote_value for v in s.votes)
-            total_votes += len(s.votes)
-            
-        safety_score = None
-        if total_votes > 0:
-            avg_vote = sum_votes / total_votes
-            safety_score = ((10 - avg_vote) / 10) * 100
+        scandal_count, safety_score = _calculate_safety_score(artist.scandals)
 
         result.append(ArtistResponse(
             id=artist.id,
@@ -80,11 +87,11 @@ def get_artist(request: Request, artist_id: int, db: Session = Depends(get_db)):
         .first()
     )
     if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
+        not_found("Artist")
 
-    scandal_count = sum(1 for s in artist.scandals if s.verified)
+    scandal_count, _ = _calculate_safety_score(artist.scandals)
     
-    # Calculate safety percentage logic
+    # Build per-scandal response with votes
     total_votes = 0
     sum_votes = 0
     scandals_response = []
@@ -142,12 +149,12 @@ def get_artist(request: Request, artist_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.patch("/{artist_id}/approve")
+@router.patch("/{artist_id}/approve", response_model=ArtistApproveResponse)
 def approve_artist(artist_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Toggle artist approval status."""
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
+        not_found("Artist")
 
     artist.approved = not artist.approved
     db.commit()
@@ -156,7 +163,7 @@ def approve_artist(artist_id: int, db: Session = Depends(get_db), admin: str = D
     return {"id": artist.id, "name": artist.name, "approved": artist.approved}
 
 
-@router.post("/approve-all")
+@router.post("/approve-all", response_model=MessageCountResponse)
 def approve_all_artists(db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Approve all pending artists."""
     pending_artists = db.query(Artist).filter(Artist.approved == False).all()
@@ -169,12 +176,12 @@ def approve_all_artists(db: Session = Depends(get_db), admin: str = Depends(requ
     return {"message": f"Successfully approved {count} artists", "count": count}
 
 
-@router.delete("/{artist_id}")
+@router.delete("/{artist_id}", response_model=MessageResponse)
 def delete_artist(artist_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Delete an artist and all associated scandals (cascade)."""
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
+        not_found("Artist")
 
     db.delete(artist)
     db.commit()
@@ -190,7 +197,7 @@ def submit_community_scandal(
     """Submit a community scandal suggestion, requires Spotify Auth."""
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
-        raise HTTPException(status_code=404, detail="Artist not found")
+        not_found("Artist")
         
     # Rate limit check: max 3 per hour
     one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -199,7 +206,7 @@ def submit_community_scandal(
         CommunityScandal.created_at >= one_hour_ago
     ).count()
     if recent_count >= 3:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. You can only submit 3 scandals per hour.")
+        rate_limited("Rate limit exceeded. You can only submit 3 scandals per hour.")
         
     scandal = CommunityScandal(
         artist_id=artist_id,

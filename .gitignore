@@ -6,6 +6,8 @@ node_modules/
 # Testing
 coverage/
 scan.log
+.agent/
+.backUp/
 
 # Production builds
 dist/

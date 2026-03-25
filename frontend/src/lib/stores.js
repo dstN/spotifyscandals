@@ -82,6 +82,9 @@ if (typeof window !== 'undefined') {
   })
 }
 
+/** Playlist filter: show only these artist IDs on Home after submission */
+export const playlistFilterIds = writable(null)
+
 export const spotifyUser = derived(publicToken, ($token) => {
   if (!$token) return null
   try {

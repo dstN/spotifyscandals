@@ -3,6 +3,16 @@ Scandals router — listing, Gemini scanning, and verification.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
+import asyncio
+import json
+import logging
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone, timedelta
+
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from database import get_db
@@ -13,14 +23,34 @@ from schemas import (
     ScanScandalResponse,
     DashboardStats,
     VoteRequest,
+    VoteResponse,
+    VerifyToggleResponse,
+    SourceVerifyToggleResponse,
+    SourceCreatedResponse,
+    ReportResponse,
+    MessageResponse,
     AdminSourceCreate,
     CommunitySourceSubmit,
     CommunitySourceResponse,
 )
 from services.gemini import scan_artists_for_scandals
 from auth_deps import require_admin, get_current_public_user, get_optional_public_user
+from errors import not_found, bad_request, internal_error
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/scandals", tags=["Scandals"])
+
+
+def _get_source(db: Session, scandal_id: int, source_id: int) -> ScandalSource:
+    """Look up a ScandalSource by id scoped to a scandal, or raise 404."""
+    source = db.query(ScandalSource).filter(
+        ScandalSource.id == source_id,
+        ScandalSource.scandal_id == scandal_id,
+    ).first()
+    if not source:
+        not_found("Source")
+    return source
 
 
 @router.get("/stats", response_model=DashboardStats)
@@ -103,7 +133,7 @@ def list_scandals(
         
     return response
 
-@router.post("/{scandal_id}/vote")
+@router.post("/{scandal_id}/vote", response_model=VoteResponse)
 def submit_scandal_vote(
     scandal_id: int, 
     body: VoteRequest, 
@@ -113,11 +143,8 @@ def submit_scandal_vote(
     """Allow a public authenticated user to vote (1-10) on a scandal's severity."""
     scandal = db.query(Scandal).filter(Scandal.id == scandal_id).first()
     if not scandal:
-        raise HTTPException(status_code=404, detail="Scandal not found")
-        
-    if not (0 <= body.vote <= 10):
-        raise HTTPException(status_code=400, detail="Vote must be between 0 and 10")
-        
+        not_found("Scandal")
+
     vote_record = db.query(ScandalVote).filter(
         ScandalVote.scandal_id == scandal_id,
         ScandalVote.spotify_user_id == spotify_id
@@ -146,15 +173,6 @@ def submit_scandal_vote(
         "vote_count": len(votes)
     }
 
-
-from database import SessionLocal
-import asyncio
-import subprocess
-import tempfile
-import sys
-import os
-import json
-from datetime import datetime, timezone, timedelta
 
 def _trigger_detached_scan(artist_data: list[dict]):
     """Launch the scanner_cli.py as a detached process."""
@@ -186,14 +204,14 @@ def _trigger_detached_scan(artist_data: list[dict]):
             creationflags=creationflags,
             start_new_session=True if sys.platform != "win32" else False
         )
-        print(f"[Scandal-Router] Detached scan process started. UI Logs enabled.")
+        logger.info("Detached scan process started")
     except Exception as e:
-        print(f"[Scandal-Router] Failed to launch detached scan: {e}")
+        logger.exception("Failed to launch detached scan")
         # Cleanup temp file if launch failed
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-@router.post("/scan")
+@router.post("/scan", response_model=MessageResponse)
 async def scan_for_scandals(
     body: ScanScandalRequest, 
     background_tasks: BackgroundTasks, 
@@ -210,7 +228,7 @@ async def scan_for_scandals(
         artists = db.query(Artist).options(joinedload(Artist.scandals)).filter(Artist.approved == True).all()  # noqa
 
     if not artists:
-        raise HTTPException(status_code=404, detail="No approved artists found to scan")
+        not_found("Approved artists")
 
     four_weeks_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(weeks=4)
     artists_to_scan = []
@@ -240,20 +258,38 @@ async def scan_for_scandals(
     # Check if a scan is already running to avoid conflicts
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     lock_path = os.path.join(backend_dir, "scan.lock")
+
+    # Check for stale lock (older than 2 hours = likely a crashed scan)
     if os.path.exists(lock_path):
-        raise HTTPException(status_code=400, detail="A scan is already in progress. Please wait for it to finish.")
+        try:
+            lock_age = time.time() - os.path.getmtime(lock_path)
+            if lock_age > 7200:  # 2 hours
+                logger.warning("Removing stale scan.lock (age: %.0fs)", lock_age)
+                os.remove(lock_path)
+            else:
+                bad_request("A scan is already in progress. Please wait for it to finish.")
+        except OSError:
+            pass  # File disappeared between check and action
+
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        # Write PID for debugging stale locks
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+    except FileExistsError:
+        bad_request("A scan is already in progress. Please wait for it to finish.")
 
     _trigger_detached_scan(artist_data)
 
     return {"message": f"Scan initiated for {len(artists_to_scan)} artists in the background. Check back later for results."}
 
 
-@router.patch("/{scandal_id}/verify")
+@router.patch("/{scandal_id}/verify", response_model=VerifyToggleResponse)
 def verify_scandal(scandal_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Toggle scandal verification status."""
     scandal = db.query(Scandal).filter(Scandal.id == scandal_id).first()
     if not scandal:
-        raise HTTPException(status_code=404, detail="Scandal not found")
+        not_found("Scandal")
 
     scandal.verified = not scandal.verified
     db.commit()
@@ -262,17 +298,17 @@ def verify_scandal(scandal_id: int, db: Session = Depends(get_db), admin: str = 
     return {"id": scandal.id, "verified": scandal.verified}
 
 
-@router.delete("/{scandal_id}")
+@router.delete("/{scandal_id}", response_model=MessageResponse)
 def delete_scandal(scandal_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     """Delete a scandal and its sources (cascade)."""
     scandal = db.query(Scandal).filter(Scandal.id == scandal_id).first()
     if not scandal:
-        raise HTTPException(status_code=404, detail="Scandal not found")
+        not_found("Scandal")
 
     db.delete(scandal)
     db.commit()
     return {"detail": "Scandal deleted"}
-@router.patch("/{scandal_id}/sources/{source_id}/verify")
+@router.patch("/{scandal_id}/sources/{source_id}/verify", response_model=SourceVerifyToggleResponse)
 def verify_scandal_source(
     scandal_id: int, 
     source_id: int, 
@@ -280,14 +316,7 @@ def verify_scandal_source(
     admin: str = Depends(require_admin)
 ):
     """Toggle the verification status of a specific source."""
-    source = db.query(ScandalSource).filter(
-        ScandalSource.id == source_id,
-        ScandalSource.scandal_id == scandal_id
-    ).first()
-    
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-        
+    source = _get_source(db, scandal_id, source_id)
     source.is_verified = not source.is_verified
     db.commit()
     db.refresh(source)
@@ -295,7 +324,7 @@ def verify_scandal_source(
     return {"id": source.id, "is_verified": source.is_verified}
 
 
-@router.delete("/{scandal_id}/sources/{source_id}")
+@router.delete("/{scandal_id}/sources/{source_id}", response_model=MessageResponse)
 def delete_scandal_source(
     scandal_id: int, 
     source_id: int, 
@@ -303,40 +332,27 @@ def delete_scandal_source(
     admin: str = Depends(require_admin)
 ):
     """Delete a specific source from a scandal."""
-    source = db.query(ScandalSource).filter(
-        ScandalSource.id == source_id,
-        ScandalSource.scandal_id == scandal_id
-    ).first()
-    
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-        
+    source = _get_source(db, scandal_id, source_id)
     db.delete(source)
     db.commit()
     return {"detail": "Source deleted"}
 
 
-@router.post("/{scandal_id}/sources/{source_id}/report")
+@router.post("/{scandal_id}/sources/{source_id}/report", response_model=ReportResponse)
 def report_scandal_source(
     scandal_id: int, 
     source_id: int, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    spotify_id: str = Depends(get_current_public_user),
 ):
-    """Flag a source as reported (public endpoint)."""
-    source = db.query(ScandalSource).filter(
-        ScandalSource.id == source_id,
-        ScandalSource.scandal_id == scandal_id
-    ).first()
-    
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-        
+    """Flag a source as reported (requires Spotify auth)."""
+    source = _get_source(db, scandal_id, source_id)
     source.is_reported = True
     db.commit()
     return {"message": "Source reported successfully", "is_reported": True}
 
 
-@router.post("/{scandal_id}/sources")
+@router.post("/{scandal_id}/sources", response_model=SourceCreatedResponse)
 def admin_add_source(
     scandal_id: int,
     body: AdminSourceCreate,
@@ -346,7 +362,7 @@ def admin_add_source(
     """Admin directly adds a verified source to an existing scandal."""
     scandal = db.query(Scandal).filter(Scandal.id == scandal_id).first()
     if not scandal:
-        raise HTTPException(status_code=404, detail="Scandal not found")
+        not_found("Scandal")
 
     source = ScandalSource(
         scandal_id=scandal_id,
@@ -359,7 +375,7 @@ def admin_add_source(
     return {"id": source.id, "source_url": source.source_url, "is_verified": source.is_verified}
 
 
-@router.post("/{scandal_id}/community-sources")
+@router.post("/{scandal_id}/community-sources", response_model=MessageResponse)
 def submit_community_source(
     scandal_id: int,
     body: CommunitySourceSubmit,
@@ -369,7 +385,7 @@ def submit_community_source(
     """Public user submits a source URL for an existing scandal (pending admin review)."""
     scandal = db.query(Scandal).filter(Scandal.id == scandal_id).first()
     if not scandal:
-        raise HTTPException(status_code=404, detail="Scandal not found")
+        not_found("Scandal")
 
     community_source = CommunitySource(
         scandal_id=scandal_id,
@@ -379,3 +395,4 @@ def submit_community_source(
     db.add(community_source)
     db.commit()
     return {"message": "Source submitted for review"}
+

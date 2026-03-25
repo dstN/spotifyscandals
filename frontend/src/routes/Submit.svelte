@@ -1,21 +1,28 @@
 <script>
   import { submitPlaylist } from '../lib/api.js'
-  import { showToast } from '../lib/stores.js'
+  import { showToast, playlistFilterIds } from '../lib/stores.js'
 
   let playlistUrl = $state('')
   let submitting = $state(false)
-  let result = $state(null)
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!playlistUrl.trim()) return
 
     submitting = true
-    result = null
 
     try {
-      result = await submitPlaylist(playlistUrl.trim())
-      showToast('success', `Added ${result.artists_added} artists from "${result.playlist_name}"`)
+      const result = await submitPlaylist(playlistUrl.trim())
+      const added = result.artists_added
+      const skipped = result.artists_skipped
+      showToast('success', `"${result.playlist_name}": ${added} added, ${skipped} already existed (${added + skipped} total)`)
+      // Store the artist IDs so Home can filter to just these artists
+      if (result.artists?.length) {
+        playlistFilterIds.set(result.artists.map(a => a.id))
+      }
+      // Navigate to home
+      history.pushState({}, '', '/')
+      window.dispatchEvent(new PopStateEvent('popstate'))
     } catch (e) {
       showToast('error', `Failed: ${e.message}`)
     } finally {
@@ -77,75 +84,6 @@
       {/if}
     </button>
   </form>
-
-  <!-- Result Card -->
-  {#if result}
-    <div class="glass fade-in space-y-4 p-6">
-      <h2 class="text-lg font-semibold text-text-primary">
-        ✓ Extraction Complete
-      </h2>
-
-      <div class="grid grid-cols-3 gap-4">
-        <div class="rounded-2xl bg-bg-tertiary p-4 text-center">
-          <p class="text-2xl font-bold text-spotify">{result.artists_added}</p>
-          <p class="mt-1 text-xs text-text-tertiary">Artists Added</p>
-        </div>
-        <div class="rounded-2xl bg-bg-tertiary p-4 text-center">
-          <p class="text-2xl font-bold text-text-secondary">{result.artists_skipped}</p>
-          <p class="mt-1 text-xs text-text-tertiary">Already Existed</p>
-        </div>
-        <div class="rounded-2xl bg-bg-tertiary p-4 text-center">
-          <p class="text-2xl font-bold text-accent">
-            {result.artists_added + result.artists_skipped}
-          </p>
-          <p class="mt-1 text-xs text-text-tertiary">Total in Playlist</p>
-        </div>
-      </div>
-
-      <div class="flex gap-3">
-        <a href="/artists" class="btn-spotify inline-block flex-1 text-center no-underline py-2">
-          Review Artists →
-        </a>
-        <button
-          class="btn-outline flex-1"
-          onclick={() => { result = null; playlistUrl = '' }}
-        >
-          Submit Another
-        </button>
-      </div>
-
-      <!-- Artist Grid -->
-      {#if result.artists && result.artists.length > 0}
-        <div class="pt-2">
-          <h3 class="mb-3 text-sm font-semibold text-text-secondary">Artists in this Playlist</h3>
-          <div class="grid gap-3 sm:grid-cols-2">
-            {#each result.artists as artist (artist.id)}
-              <a 
-                href="/artist/{artist.id}" 
-                class="glass group/card relative flex items-center gap-3 p-3 transition-all hover:-translate-y-1 block no-underline"
-              >
-                <img
-                  src={artist.image_url || 'https://misc.scdn.co/liked-songs/liked-songs-300.png'}
-                  alt="{artist.name} cover"
-                  class="h-12 w-12 rounded-full object-cover ring-2 ring-glass-border group-hover/card:ring-accent transition-colors"
-                />
-                <div class="min-w-0 flex-1">
-                  <h4 class="truncate text-sm font-bold text-text-primary group-hover/card:text-accent transition-colors">
-                    {artist.name}
-                  </h4>
-                  {#if artist.scandal_count > 0}
-                    <p class="text-xs text-text-secondary">
-                      {artist.scandal_count} scandal{artist.scandal_count === 1 ? '' : 's'}
-                    </p>
-                  {/if}
-                </div>
-              </a>
-            {/each}
-          </div>
-        </div>
-      {/if}
-    </div>
-  {/if}
 
   <!-- Instructions -->
   <div class="glass p-6">
