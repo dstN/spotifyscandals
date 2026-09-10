@@ -4,14 +4,14 @@ A web app that scans Spotify playlists for artist controversies using Google Gem
 
 ## Features
 
-- **Playlist Scanning** — Paste a Spotify playlist URL to extract all artists
-- **AI Scandal Detection** — Google Gemini discovers controversies with source verification
-- **Community Voting** — Spotify-authenticated users rate scandal severity (0-10)
-- **Safety Scores** — Aggregated severity ratings per artist
-- **Community Submissions** — Users can submit scandals and sources for admin review
-- **Source Verification** — AI + web scraping validates scandal sources
-- **Batch Processing** — Gemini Batch API support for scanning many artists at once
-- **Admin Dashboard** — Full CRUD for artists, scandals, sources, and community submissions
+- **Playlist Scanning**: Paste a Spotify playlist URL to extract all artists
+- **AI Scandal Detection**: Google Gemini discovers controversies with source verification
+- **Community Voting**: Spotify-authenticated users rate scandal severity (0-10)
+- **Safety Scores**: Aggregated severity ratings per artist
+- **Community Submissions**: Users can submit scandals and sources for admin review
+- **Source Verification**: AI + web scraping validates scandal sources
+- **Batch Processing**: Gemini Batch API support for scanning many artists at once
+- **Admin Dashboard**: Full CRUD for artists, scandals, sources, and community submissions
 
 ## Tech Stack
 
@@ -88,11 +88,11 @@ The backend serves the built `dist/` folder as static files at `/`.
 
 ## Usage
 
-1. **Submit a playlist** — Paste a Spotify playlist URL on the home page
-2. **Admin approves artists** — Login at `/login`, approve extracted artists
-3. **Scan for scandals** — Trigger AI scanning from the admin dashboard
-4. **Review & verify** — Admin verifies scandals and sources
-5. **Public voting** — Anyone with a Spotify account can vote on scandal severity
+1. **Submit a playlist**: Paste a Spotify playlist URL on the home page
+2. **Admin approves artists**: Login at `/login`, approve extracted artists
+3. **Scan for scandals**: Trigger AI scanning from the admin dashboard
+4. **Review & verify**: Admin verifies scandals and sources
+5. **Public voting**: Anyone with a Spotify account can vote on scandal severity
 
 ## Project Structure
 
